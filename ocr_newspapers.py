@@ -377,7 +377,10 @@ def _call_mlx(b64, conn_retries=3):
                 ]}],
                 "max_tokens": 4096,
             })
-            return resp.json()["choices"][0]["message"]["content"].strip()
+            resp.raise_for_status()
+            # The mlx_vlm server can return 200 with content: null; coerce to "".
+            content = (resp.json().get("choices") or [{}])[0].get("message", {}).get("content")
+            return (content or "").strip()
         except httpx.ReadTimeout:
             return None  # signal timeout to caller
         except (httpx.ReadError, httpx.ConnectError, httpx.RemoteProtocolError) as e:
@@ -513,7 +516,12 @@ def process_one_pdf(pdf_path, output_dir, layout_model):
         regions_with_text = []
         for block in merged:
             x1,y1,x2,y2 = block["bbox"]
-            text, status = glm_ocr(full_image.crop((x1,y1,x2,y2)))
+            try:
+                text, status = glm_ocr(full_image.crop((x1,y1,x2,y2)))
+            except Exception as e:
+                # One bad region must never abort a whole multi-page run.
+                print(f"\n      [region error: {e}]", flush=True)
+                text, status = "[OCR error]", "error"
             regions_with_text.append({"bbox": block["bbox"], "label": block["label"], "text": text, "status": status})
         img_rel = f"images/{img_fn}"
         generate_page_viewer(img_rel, img_w, img_h, regions_with_text,
