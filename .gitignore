@@ -1,0 +1,16 @@
+# PDFs and rendered review site are data, not code
+pdfs/
+site/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# SLURM logs
+longleaf/ocr_*.out
+longleaf/ocr_*.err
+
+# macOS
+.DS_Store
