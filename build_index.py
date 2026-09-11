@@ -76,7 +76,9 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 <body>
 <header>
   <h1>__TITLE__</h1>
-  <p>Layout detection + GLM-OCR results for review</p>
+  <p>Layout detection + GLM-OCR
+  &middot; <a href="../index.html" style="color:#c9b896">Archive</a>
+  &middot; <a href="../search.html?pub=__PUB__" style="color:#e8d9a8;font-weight:600">Search this publication &rarr;</a></p>
 </header>
 <div class="controls">
   <input type="search" id="search" placeholder="Filter by issue name...">
@@ -185,6 +187,7 @@ def build(output_dir, title="Progressive Magazines — OCR Review", image_base="
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
     page = (_PAGE_TEMPLATE
             .replace("__TITLE__", html.escape(title))
+            .replace("__PUB__", output_dir.name)
             .replace("__IMG_BASE__", json.dumps(image_base.rstrip("/"))))
     (output_dir / "index.html").write_text(page)
     print(f"Built index for {len(issues)} issues -> {output_dir/'index.html'}", flush=True)

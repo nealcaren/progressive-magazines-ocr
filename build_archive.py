@@ -69,7 +69,8 @@ header p{{font-size:14px;color:#9a8b74;margin-top:4px;font-family:sans-serif}}
 .mag-card .meta{{font-size:12px;color:#8a7d6d;margin-top:4px;font-family:sans-serif}}
 </style></head><body>
 <header><h1>{html.escape(title)}</h1>
-<p>Layout detection + GLM-OCR &middot; {len(mags)} magazines &middot; {total_issues} issues</p></header>
+<p>Layout detection + GLM-OCR &middot; {len(mags)} magazines &middot; {total_issues} issues
+&middot; <a href="search.html" style="color:#e8d9a8;font-weight:600">Search full text &rarr;</a></p></header>
 <div class="container"><div class="grid">{chr(10).join(cards)}</div></div>
 </body></html>'''
     (root / "index.html").write_text(page)
