@@ -90,9 +90,13 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 <script>
 let issues = [];
 let currentSort = 'name';
+const IMG_BASE = __IMG_BASE__;  // "" -> local images/, or an R2 base URL
 
 function displayTitle(name) {
   return name.replace(/[-_]+/g, ' ').replace(/\\b\\w/g, c => c.toUpperCase());
+}
+function thumbUrl(name) {
+  return IMG_BASE ? `${IMG_BASE}/${name}/page_01.jpg` : `${name}/images/page_01.jpg`;
 }
 
 function renderGrid(filtered) {
@@ -109,7 +113,7 @@ function renderGrid(filtered) {
       : `<div class="pipeline-badge old">Needs reprocessing</div>`;
     return `<div class="${cardClass}">
       <a href="${issue.name}/index.html">
-        <div class="thumb"><img src="${issue.name}/images/page_01.jpg" loading="lazy" alt="${displayTitle(issue.name)}"></div>
+        <div class="thumb"><img src="${thumbUrl(issue.name)}" loading="lazy" alt="${displayTitle(issue.name)}"></div>
         <div class="info">
           <div class="title">${displayTitle(issue.name)}</div>
           <div class="meta">${issue.pages} pages</div>
@@ -161,7 +165,9 @@ fetch('manifest.json')
 """
 
 
-def build(output_dir, title="Progressive Magazines — OCR Review"):
+def build(output_dir, title="Progressive Magazines — OCR Review", image_base=""):
+    """image_base: if set (e.g. an R2 URL), gallery thumbnails load from
+    {image_base}/{issue}/page_01.jpg instead of the local {issue}/images/."""
     output_dir = Path(output_dir)
     issues = sorted(d for d in output_dir.iterdir()
                     if d.is_dir() and (d / "index.html").exists())
@@ -177,8 +183,10 @@ def build(output_dir, title="Progressive Magazines — OCR Review"):
         })
 
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    (output_dir / "index.html").write_text(
-        _PAGE_TEMPLATE.replace("__TITLE__", html.escape(title)))
+    page = (_PAGE_TEMPLATE
+            .replace("__TITLE__", html.escape(title))
+            .replace("__IMG_BASE__", json.dumps(image_base.rstrip("/"))))
+    (output_dir / "index.html").write_text(page)
     print(f"Built index for {len(issues)} issues -> {output_dir/'index.html'}", flush=True)
 
 
