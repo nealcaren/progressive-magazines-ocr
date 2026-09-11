@@ -104,7 +104,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Publish OCR site to R2 + deploy dir")
     ap.add_argument("site", help="Local review site dir (holds issue subfolders)")
     ap.add_argument("--deploy-dir", required=True, help="Where to write light HTML/JSON copy")
-    ap.add_argument("--prefix", default="save-the-masses", help="R2 key prefix")
+    ap.add_argument("--prefix", default="progressive-magazines",
+                    help="R2 key prefix (shared across the archive; issue names are unique)")
     ap.add_argument("--public-base", default="https://pages.dangerouspress.org",
                     help="Public base URL that fronts the R2 bucket")
     ap.add_argument("--title", default="The Masses — Read the Issues")
