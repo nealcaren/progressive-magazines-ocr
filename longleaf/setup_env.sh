@@ -23,6 +23,7 @@ mkdir -p $PIP_CACHE_DIR $TMPDIR
 
 module purge
 module load anaconda/2024.02
+eval "$(conda shell.bash hook)"   # enable `conda activate` in non-interactive shells
 
 # Create conda environment on /work (not home) to avoid quota issues
 conda create --yes --prefix $ENV_PREFIX python=3.12
