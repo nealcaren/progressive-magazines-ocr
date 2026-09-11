@@ -650,7 +650,8 @@ if __name__ == "__main__":
     # Rebuild the top-level gallery + manifest after the run
     try:
         import build_index
-        build_index.build(output_dir)
+        title = output_dir.name.replace("-", " ").replace("_", " ").title() + " — OCR Review"
+        build_index.build(output_dir, title=title)
     except Exception as e:
         print(f"(index build skipped: {e})", flush=True)
 
