@@ -30,6 +30,9 @@ import os, sys, json, shutil, argparse
 from pathlib import Path
 
 R2_BUCKET = "african-american-press-archive"
+# Same Cloudflare R2 setup the dangerouspress-ingest repo uploads through.
+R2_ENDPOINT = "https://ae978df95b073e0e6a0d595c996900ca.r2.cloudflarestorage.com"
+R2_PROFILE = "r2"  # AWS CLI profile in ~/.aws (holds the R2 key/secret)
 
 # Nicer display titles; fall back to slug.title() for anything not listed.
 TITLES = {
@@ -47,18 +50,18 @@ def title_of(slug):
     return TITLES.get(slug, slug.replace("-", " ").replace("_", " ").title())
 
 
-def s3_client():
+def s3_client(profile=R2_PROFILE, endpoint=R2_ENDPOINT):
+    """Prefer the AWS CLI 'r2' profile (~/.aws); fall back to R2_* env vars."""
     import boto3
-    endpoint = os.environ.get("R2_ENDPOINT_URL")
-    if not endpoint:
-        sys.exit("ERROR: R2_ENDPOINT_URL not set. Run: source ~/.r2env")
-    try:
+    if os.environ.get("R2_ENDPOINT_URL") and os.environ.get("R2_ACCESS_KEY_ID"):
         return boto3.client(
-            "s3", endpoint_url=endpoint,
+            "s3", endpoint_url=os.environ["R2_ENDPOINT_URL"],
             aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
             aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"])
-    except KeyError as e:
-        sys.exit(f"ERROR: {e} not set. Run: source ~/.r2env")
+    try:
+        return boto3.Session(profile_name=profile).client("s3", endpoint_url=endpoint)
+    except Exception as e:
+        sys.exit(f"ERROR: no R2 credentials (AWS profile '{profile}' or R2_* env): {e}")
 
 
 def _magazines(root):
