@@ -20,10 +20,12 @@ from iiif.static import IIIFStatic
 from iiif_prezi3 import Manifest, config
 
 
-def build(issue_dir, out, prefix):
+def build(issue_dir, out, prefix, max_pages=None):
     issue_dir = Path(issue_dir); out = Path(out); prefix = prefix.rstrip("/")
     issue = issue_dir.name
     page_jsons = sorted(issue_dir.glob("page_*.json"))
+    if max_pages:
+        page_jsons = page_jsons[:max_pages]
     tiles_root = out / "iiif"
     tiles_root.mkdir(parents=True, exist_ok=True)
 
@@ -91,5 +93,6 @@ if __name__ == "__main__":
     ap.add_argument("issue_dir")
     ap.add_argument("--out", default="iiif_demo")
     ap.add_argument("--prefix", default="http://localhost:8791")
+    ap.add_argument("--max-pages", type=int, default=None)
     a = ap.parse_args()
-    build(a.issue_dir, a.out, a.prefix)
+    build(a.issue_dir, a.out, a.prefix, a.max_pages)
