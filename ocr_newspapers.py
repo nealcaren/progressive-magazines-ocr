@@ -1,25 +1,44 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "pymupdf",
+#     "paddlepaddle",
+#     "paddlex[ocr]",
+#     "pillow",
+#     "httpx",
+#     "numpy",
+# ]
+# ///
 """
 Progressive-magazines OCR pipeline (local PDFs -> review website).
 
 Two-stage pipeline, identical to the dangerouspress-ocr project:
   PaddleX PP-DocLayout_plus-L  (layout detection)
-  GLM-OCR via transformers     (text recognition)
+  GLM-OCR                      (text recognition)
 
 Unlike the dangerouspress pipeline this one reads PDFs from a local folder and
 writes the review site to a local folder — no Hugging Face up/download. It is
-meant for smaller collections (e.g. the "Role Readings" magazines) that fit on
-a single Longleaf GPU job.
+meant for smaller collections (e.g. the "Role Readings" magazines).
 
-Usage:
-    python ocr_newspapers.py --input-dir pdfs/woman-rebel --output-dir site
-    python ocr_newspapers.py --input-dir pdfs/woman-rebel --output-dir site --recursive
+Two OCR backends, picked by --backend (default: auto):
+  mlx          — local Mac: calls a GLM-OCR MLX server over HTTP (localhost:8080)
+  transformers — Longleaf/GPU: loads zai-org/GLM-OCR in-process via transformers
+  auto         — mlx on macOS, transformers elsewhere
+
+Usage (local Mac, via uv — no manual env needed):
+    # In one terminal, start the OCR server (GLM-OCR is a vision model -> mlx_vlm):
+    #   uv run --with mlx-vlm python -m mlx_vlm.server --model mlx-community/GLM-OCR-bf16 --port 8080
+    uv run ocr_newspapers.py --input-dir "pdfs/woman-rebel" --output-dir site/woman-rebel
+
+Usage (Longleaf GPU, in the conda env from longleaf/setup_env.sh):
+    python ocr_newspapers.py --input-dir pdfs/woman-rebel --output-dir site/woman-rebel
 
 Each PDF becomes one "issue" (a subdirectory of --output-dir named after the
 PDF stem). Re-running skips issues that already have an index.html, so a job
 that dies partway through resumes where it left off.
 """
 
-import io, os, json, base64, html, time, signal, argparse, shutil
+import io, os, sys, json, base64, html, time, signal, argparse, shutil, platform
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -31,11 +50,16 @@ os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 from paddlex import create_model
 
 # ─── Config ───
-GLM_OCR_MODEL = "zai-org/GLM-OCR"
+GLM_OCR_MODEL = "zai-org/GLM-OCR"                   # transformers backend
+GLM_MLX_MODEL = "mlx-community/GLM-OCR-bf16"         # mlx backend
+GLM_MLX_URL = "http://localhost:8080/v1/chat/completions"
 LAYOUT_MODEL = "PP-DocLayout_plus-L"
 OCR_TIMEOUT = 25  # seconds per OCR request
 OCR_LABELS = {"text", "paragraph_title", "doc_title", "figure_title"}
 PIPELINE_VERSION = "2025-03-07-col-fix"  # matches dangerouspress-ocr layout logic
+
+# Chosen in main(); controls which glm_ocr implementation runs.
+BACKEND = "transformers"
 
 # ─── Timeout helper ───
 class OCRTimeoutError(Exception):
@@ -293,9 +317,8 @@ def truncate_repetition(text, min_len=20):
     second = text.find(best_phrase, first+len(best_phrase))
     return text[:second+len(best_phrase)].rstrip() if second != -1 else text
 
-# ─── GLM-OCR ───
-def glm_ocr(image, max_retries=2, timeout=OCR_TIMEOUT):
-    """Returns (text, status) where status is 'ok', 'timeout', or 'repetition'."""
+# ─── GLM-OCR: transformers backend (Longleaf / GPU) ───
+def _glm_ocr_transformers(image, max_retries=2, timeout=OCR_TIMEOUT):
     import torch
     _load_glm_ocr()
     buf = io.BytesIO(); image.save(buf, format="PNG"); buf.seek(0)
@@ -328,6 +351,65 @@ def glm_ocr(image, max_retries=2, timeout=OCR_TIMEOUT):
             return "[OCR timeout]", "timeout"
     print(f"\n      [truncating]", flush=True)
     return truncate_repetition(text), "repetition"
+
+# ─── GLM-OCR: MLX backend (local Mac, HTTP to an MLX server) ───
+_mlx_client = None
+
+def _mlx_http_client():
+    global _mlx_client
+    if _mlx_client is None:
+        import httpx
+        _mlx_client = httpx.Client(
+            timeout=httpx.Timeout(connect=10.0, read=OCR_TIMEOUT, write=10.0, pool=10.0),
+            limits=httpx.Limits(max_connections=8, max_keepalive_connections=8))
+    return _mlx_client
+
+def _call_mlx(b64, conn_retries=3):
+    import httpx
+    client = _mlx_http_client()
+    for attempt in range(conn_retries + 1):
+        try:
+            resp = client.post(GLM_MLX_URL, json={
+                "model": GLM_MLX_MODEL,
+                "messages": [{"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                    {"type": "text", "text": "Text Recognition:"},
+                ]}],
+                "max_tokens": 4096,
+            })
+            return resp.json()["choices"][0]["message"]["content"].strip()
+        except httpx.ReadTimeout:
+            return None  # signal timeout to caller
+        except (httpx.ReadError, httpx.ConnectError, httpx.RemoteProtocolError) as e:
+            if attempt < conn_retries:
+                wait = 2 ** attempt
+                print(f"\n      [connection error: {e}, retry in {wait}s]", flush=True)
+                time.sleep(wait)
+            else:
+                raise
+
+def _glm_ocr_mlx(image, max_retries=2):
+    buf = io.BytesIO(); image.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    text = None
+    for attempt in range(max_retries + 1):
+        text = _call_mlx(b64)
+        if text is None:
+            print(f"\n      [timeout after {OCR_TIMEOUT}s, retry {attempt+1}/{max_retries}]", flush=True)
+            if attempt == max_retries:
+                return "[OCR timeout]", "timeout"
+            continue
+        if not has_repetition(text): return text, "ok"
+        if attempt < max_retries: print(f"      [repetition, retry {attempt+1}/{max_retries}]", flush=True)
+    print(f"      [truncating]", flush=True)
+    return truncate_repetition(text or ""), "repetition"
+
+# ─── GLM-OCR dispatch ───
+def glm_ocr(image):
+    """Returns (text, status) where status is 'ok', 'timeout', or 'repetition'."""
+    if BACKEND == "mlx":
+        return _glm_ocr_mlx(image)
+    return _glm_ocr_transformers(image)
 
 # ─── PDF extraction ───
 def extract_page_image(doc, page_idx, output_path):
@@ -451,7 +533,8 @@ def process_one_pdf(pdf_path, output_dir, layout_model):
             "version": PIPELINE_VERSION,
             "pipeline": {
                 "layout_model": LAYOUT_MODEL,
-                "ocr_model": GLM_OCR_MODEL,
+                "ocr_backend": BACKEND,
+                "ocr_model": GLM_MLX_MODEL if BACKEND == "mlx" else GLM_OCR_MODEL,
                 "ocr_timeout": OCR_TIMEOUT,
             },
             "layout": {
@@ -494,7 +577,16 @@ if __name__ == "__main__":
                         help="Search --input-dir recursively for PDFs")
     parser.add_argument("--force", action="store_true",
                         help="Re-process issues even if an index.html already exists")
+    parser.add_argument("--backend", choices=["auto", "mlx", "transformers"], default="auto",
+                        help="OCR backend: mlx (local Mac server), transformers (GPU), "
+                             "or auto (mlx on macOS, transformers elsewhere)")
     args = parser.parse_args()
+
+    BACKEND = args.backend
+    if BACKEND == "auto":
+        BACKEND = "mlx" if platform.system() == "Darwin" else "transformers"
+    # Push the resolved choice into module scope so glm_ocr() can see it.
+    globals()["BACKEND"] = BACKEND
 
     input_dir = Path(args.input_dir).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
@@ -509,9 +601,25 @@ if __name__ == "__main__":
         print(f"No PDFs found in {input_dir}", flush=True)
         raise SystemExit(1)
 
+    print(f"Backend: {BACKEND}", flush=True)
     print(f"Input:  {input_dir}", flush=True)
     print(f"Output: {output_dir}", flush=True)
     print(f"Found {len(pdf_files)} PDFs", flush=True)
+
+    # Fail fast if the local MLX server isn't up.
+    if BACKEND == "mlx":
+        import httpx
+        try:
+            httpx.get(GLM_MLX_URL.replace("/v1/chat/completions", "/health"), timeout=3.0)
+        except Exception:
+            try:
+                httpx.get("http://localhost:8080/v1/models", timeout=3.0)
+            except Exception:
+                print("\nERROR: no GLM-OCR MLX server at localhost:8080.\n"
+                      "Start one first (GLM-OCR is a vision model -> mlx_vlm):\n"
+                      f"  uv run --with mlx-vlm python -m mlx_vlm.server --model {GLM_MLX_MODEL} --port 8080\n",
+                      file=sys.stderr, flush=True)
+                raise SystemExit(1)
 
     ensure_assets(output_dir)
 

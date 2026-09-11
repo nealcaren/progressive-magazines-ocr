@@ -16,8 +16,9 @@ comfortably in a single Longleaf GPU job.
 2. **Post-process** — the same chain as dangerouspress: rescue low-confidence
    detections → deduplicate → fill column gaps → column-aware reading order →
    merge adjacent blocks (capped at 600px to avoid OCR timeouts).
-3. **OCR** — `zai-org/GLM-OCR` via 🤗 transformers, 25s timeout per region with
-   repetition detection + retry.
+3. **OCR** — GLM-OCR, 25s timeout per region with repetition detection + retry.
+   Two interchangeable backends: a local MLX server over HTTP (Mac) or
+   `zai-org/GLM-OCR` in-process via 🤗 transformers (Longleaf/GPU).
 4. **Output** — per issue: an OpenSeadragon review page per page, markdown,
    and JSON with full provenance, plus a per-issue `index.html`. A top-level
    gallery `index.html` + `manifest.json` ties the collection together.
@@ -37,20 +38,34 @@ pdfs/                  # (gitignored) input PDFs, one subfolder per collection
 site/                  # (gitignored) rendered review website
 ```
 
-## Running locally (Mac / any GPU box with the env)
+## Running locally (Mac)
+
+No conda env needed — `uv` reads the inline dependency block at the top of
+`ocr_newspapers.py` and builds a throwaway environment on first run. Layout
+(PaddleX) runs on CPU; OCR goes to a local **GLM-OCR MLX server** over HTTP,
+exactly as the dangerouspress `process_issue.py` does.
 
 ```bash
-python ocr_newspapers.py \
+# 1. Start the OCR server in its own terminal and leave it running.
+#    GLM-OCR is a vision-language model, so it is served by mlx_vlm (not mlx_lm):
+uv run --with mlx-vlm python -m mlx_vlm.server --model mlx-community/GLM-OCR-bf16 --port 8080
+
+# 2. Run the pipeline (auto-selects the mlx backend on macOS):
+uv run ocr_newspapers.py \
     --input-dir  "/path/to/Role Readings/Woman Rebel" \
     --output-dir site/woman-rebel
 
 # rebuild just the gallery after the fact
-python build_index.py site/woman-rebel
+uv run build_index.py site/woman-rebel
 ```
 
 Each PDF becomes one issue (subfolder named after the PDF stem). Re-running
 skips issues that already have an `index.html`; pass `--force` to redo them.
 Use `--recursive` to pull PDFs from nested subfolders.
+
+The backend is chosen by `--backend` (default `auto`): `mlx` on macOS,
+`transformers` on Longleaf/GPU. Pass it explicitly to override. If the MLX
+server isn't running, the script fails fast with the command to start it.
 
 ## Running on Longleaf (recommended)
 
