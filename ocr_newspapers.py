@@ -648,6 +648,9 @@ if __name__ == "__main__":
                              "or auto (mlx on macOS, transformers elsewhere)")
     parser.add_argument("--no-cover-ocr", action="store_true",
                         help="Disable whole-page OCR fallback on sparse/illustrated pages")
+    parser.add_argument("--shard", default=None, metavar="I/N",
+                        help="Process only PDFs where index %% N == I (for SLURM array jobs, "
+                             "e.g. --shard $SLURM_ARRAY_TASK_ID/$SLURM_ARRAY_TASK_COUNT)")
     args = parser.parse_args()
 
     if args.no_cover_ocr:
@@ -671,6 +674,11 @@ if __name__ == "__main__":
     if not pdf_files:
         print(f"No PDFs found in {input_dir}", flush=True)
         raise SystemExit(1)
+
+    if args.shard:
+        i, n = (int(x) for x in args.shard.split("/"))
+        pdf_files = [p for k, p in enumerate(pdf_files) if k % n == i]
+        print(f"Shard {i}/{n}: {len(pdf_files)} PDFs", flush=True)
 
     print(f"Backend: {BACKEND}", flush=True)
     print(f"Input:  {input_dir}", flush=True)

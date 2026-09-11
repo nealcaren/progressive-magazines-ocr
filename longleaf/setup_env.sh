@@ -34,6 +34,11 @@ conda install --yes -c pytorch -c nvidia pytorch torchvision pytorch-cuda=12.1
 # HF stack + OCR deps (transformers drives GLM-OCR directly; no HF upload needed)
 pip install transformers accelerate huggingface_hub pymupdf pillow numpy
 
+# Publish chain: IIIF tiling (libvips CLI) + manifest builder + R2 upload,
+# so build_iiif.py + `aws s3 sync` can run on-node (reuses Longleaf ~/.r2env)
+conda install --yes -c conda-forge libvips
+pip install iiif-prezi3 boto3 awscli
+
 # PaddlePaddle GPU (from Chinese index — may need retries)
 for i in 1 2 3 4 5; do
     pip install paddlepaddle-gpu==3.0.0 \
