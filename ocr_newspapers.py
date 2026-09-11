@@ -576,6 +576,10 @@ def process_one_pdf(pdf_path, output_dir, layout_model):
                     # One bad region must never abort a whole multi-page run.
                     print(f"\n      [region error: {e}]", flush=True)
                     text, status = "[OCR error]", "error"
+                # Drop empty regions (illustrations mislabeled as text yield no
+                # OCR text); keep timeouts/errors so failures stay visible.
+                if not text.strip() and status == "ok":
+                    continue
                 regions_with_text.append({"bbox": block["bbox"], "label": block["label"], "text": text, "status": status})
         img_rel = f"images/{img_fn}"
         generate_page_viewer(img_rel, img_w, img_h, regions_with_text,
