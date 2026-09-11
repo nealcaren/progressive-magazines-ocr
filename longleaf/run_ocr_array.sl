@@ -34,6 +34,7 @@ conda activate $ENV
 export HF_HOME=$WORK/hf_cache
 export TMPDIR=$WORK/tmp
 export PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+export PYTHONUTF8=1   # Longleaf locale is ASCII; force UTF-8 file I/O (em-dashes etc.)
 
 echo "Task $SLURM_ARRAY_TASK_ID/$SLURM_ARRAY_TASK_COUNT on $(hostname) at $(date)"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
