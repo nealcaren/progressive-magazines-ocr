@@ -105,6 +105,10 @@ def build_issue(issue_dir, out, prefix):
             c["thumbnail"] = [thumbs[i]]
     (issue_out / "manifest.json").write_text(json.dumps(mdict, indent=2))
     (issue_out / "index.html").write_text(_TIFY_HTML.replace("__TITLE__", title_of(magazine)))
+    # carry full_text.json so galleries/search have page counts + text
+    ft = issue_dir / "full_text.json"
+    if ft.exists():
+        shutil.copy(ft, issue_out / "full_text.json")
     return len(page_jsons)
 
 
@@ -140,6 +144,17 @@ def main(inp, out, prefix):
         p = build_issue(iss, out, prefix)
         total_pages += p
         print(f"  {iss.parent.name}/{iss.name}: {p} pages", flush=True)
+
+    # build per-magazine galleries + archive landing + full-text search, all
+    # pointing at the TIFY viewers, thumbnails from the flat JPEGs already on R2
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import build_index, build_archive, build_search
+    for mag in sorted(d for d in out.iterdir()
+                      if d.is_dir() and d.name != "iiif"
+                      and any(c.is_dir() and (c / "index.html").exists() for c in d.iterdir())):
+        build_index.build(mag, title=title_of(mag.name), image_base=prefix)
+    build_archive.build(out, title="Progressive Magazines — OCR Archive", image_base=prefix)
+    build_search.build(out, title="Progressive Magazines — Search")
     print(f"Done. {len(issues)} issues, {total_pages} pages -> {out}", flush=True)
 
 
