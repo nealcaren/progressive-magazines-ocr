@@ -35,11 +35,6 @@ conda install --yes -c pytorch -c nvidia pytorch torchvision pytorch-cuda=12.1
 # HF stack + OCR deps (transformers drives GLM-OCR directly; no HF upload needed)
 pip install transformers accelerate huggingface_hub pymupdf pillow numpy
 
-# Publish chain: IIIF tiling (libvips CLI) + manifest builder + R2 upload,
-# so build_iiif.py + `aws s3 sync` can run on-node (reuses Longleaf ~/.r2env)
-conda install --yes -c conda-forge libvips
-pip install iiif-prezi3 boto3 awscli
-
 # PaddlePaddle GPU (from Chinese index — may need retries)
 for i in 1 2 3 4 5; do
     pip install paddlepaddle-gpu==3.0.0 \
@@ -90,8 +85,21 @@ except ImportError as e:
         raise
 "
 
+# ─── Separate PUBLISH env (libvips tiling + manifest + R2 upload) ───
+# Kept apart from the OCR env on purpose: conda-forge libvips drags in glib/cairo/
+# libffi that clash with the hand-built torch/paddle/CUDA stack and break vips.
+# build_iiif.py needs no torch/paddle, so a clean env avoids the whole conflict.
+echo "Creating publish env (libvips + iiif-prezi3 + boto3 + awscli)..."
+conda create --yes --prefix $WORK/envs/progmag-publish -c conda-forge python=3.12 libvips
+conda activate $WORK/envs/progmag-publish
+pip install iiif-prezi3 boto3 awscli
+conda deactivate
+
 echo ""
-echo "Setup complete. Environment: $ENV_PREFIX"
-echo "HF cache: $HF_CACHE"
+echo "Setup complete."
+echo "  OCR env:     $ENV_PREFIX"
+echo "  Publish env: $WORK/envs/progmag-publish"
+echo "  HF cache:    $HF_CACHE"
 echo ""
-echo "Next: copy this repo + your PDFs to \$WORK, then: sbatch run_ocr.sl woman-rebel"
+echo "Next: stage PDFs in pdfs/<magazine>/, then: sbatch longleaf/run_ocr_array.sl"
+echo "After OCR: build_iiif.py + aws s3 sync from the publish env (PYTHONUTF8=1)."
