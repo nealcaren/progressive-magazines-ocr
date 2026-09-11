@@ -61,6 +61,15 @@ PIPELINE_VERSION = "2025-03-07-col-fix"  # matches dangerouspress-ocr layout log
 # Chosen in main(); controls which glm_ocr implementation runs.
 BACKEND = "transformers"
 
+# Whole-page OCR fallback for sparse / illustrated pages (covers, cartoon pages)
+# that the layout detector can't segment. Triggered when detected text regions
+# cover less than COVER_COVERAGE_THRESH of the page. On by default; harmless on
+# dense text pages (their coverage is high, so it never fires).
+COVER_OCR = True
+COVER_COVERAGE_THRESH = 0.10   # fraction of page area covered by text regions
+COVER_MAX_REGIONS = 6          # only consider pages with few regions
+COVER_MAX_LONG_SIDE = 2000     # downscale whole page before OCR
+
 # ─── Timeout helper ───
 class OCRTimeoutError(Exception):
     pass
@@ -414,6 +423,25 @@ def glm_ocr(image):
         return _glm_ocr_mlx(image)
     return _glm_ocr_transformers(image)
 
+# ─── OCR text cleanup ───
+def strip_md_fence(text):
+    """GLM-OCR sometimes wraps output in a ```markdown ... ``` fence; unwrap it."""
+    s = text.strip()
+    if s.startswith("```"):
+        lines = s.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        s = "\n".join(lines).strip()
+    return s
+
+def _page_coverage(bboxes, w, h):
+    if not w or not h:
+        return 1.0
+    area = sum((b[2]-b[0])*(b[3]-b[1]) for b in bboxes)
+    return area / float(w * h)
+
 # ─── PDF extraction ───
 def extract_page_image(doc, page_idx, output_path):
     page = doc[page_idx]
@@ -513,16 +541,42 @@ def process_one_pdf(pdf_path, output_dir, layout_model):
             text_blocks = [text_blocks[i] for i in order]
         merged = merge_adjacent_blocks(text_blocks)
         print(f" -- {gap_filled_count}->{len(merged)} regions", end="", flush=True)
+
+        coverage = _page_coverage([b["bbox"] for b in merged], img_w, img_h)
+        # A handful of regions on a full page is the cover/poster signature
+        # (dense text pages always yield many regions). Also catch pages with a
+        # few regions covering almost none of the page.
+        sparse = COVER_OCR and (
+            len(merged) <= 3
+            or (len(merged) <= COVER_MAX_REGIONS and coverage < COVER_COVERAGE_THRESH))
+
         regions_with_text = []
-        for block in merged:
-            x1,y1,x2,y2 = block["bbox"]
+        if sparse:
+            # Illustrated/cover page the layout model can't segment: OCR the whole
+            # page so display lettering (and red ink) isn't lost.
+            print(f" [sparse {coverage:.0%} -> whole-page OCR]", end="", flush=True)
+            ocr_img = full_image.copy()
+            ocr_img.thumbnail((COVER_MAX_LONG_SIDE, COVER_MAX_LONG_SIDE))
             try:
-                text, status = glm_ocr(full_image.crop((x1,y1,x2,y2)))
+                text, status = glm_ocr(ocr_img)
+                text = strip_md_fence(text)
             except Exception as e:
-                # One bad region must never abort a whole multi-page run.
-                print(f"\n      [region error: {e}]", flush=True)
+                print(f"\n      [whole-page error: {e}]", flush=True)
                 text, status = "[OCR error]", "error"
-            regions_with_text.append({"bbox": block["bbox"], "label": block["label"], "text": text, "status": status})
+            merged = [{"label": "text", "bbox": [0, 0, img_w, img_h]}]
+            regions_with_text.append({"bbox": [0, 0, img_w, img_h], "label": "text",
+                                      "text": text, "status": status, "whole_page": True})
+        else:
+            for block in merged:
+                x1,y1,x2,y2 = block["bbox"]
+                try:
+                    text, status = glm_ocr(full_image.crop((x1,y1,x2,y2)))
+                    text = strip_md_fence(text)
+                except Exception as e:
+                    # One bad region must never abort a whole multi-page run.
+                    print(f"\n      [region error: {e}]", flush=True)
+                    text, status = "[OCR error]", "error"
+                regions_with_text.append({"bbox": block["bbox"], "label": block["label"], "text": text, "status": status})
         img_rel = f"images/{img_fn}"
         generate_page_viewer(img_rel, img_w, img_h, regions_with_text,
                            output_dir / f"page_{page_num:02d}.html", page_num, total_pages, issue_name)
@@ -588,7 +642,12 @@ if __name__ == "__main__":
     parser.add_argument("--backend", choices=["auto", "mlx", "transformers"], default="auto",
                         help="OCR backend: mlx (local Mac server), transformers (GPU), "
                              "or auto (mlx on macOS, transformers elsewhere)")
+    parser.add_argument("--no-cover-ocr", action="store_true",
+                        help="Disable whole-page OCR fallback on sparse/illustrated pages")
     args = parser.parse_args()
+
+    if args.no_cover_ocr:
+        globals()["COVER_OCR"] = False
 
     BACKEND = args.backend
     if BACKEND == "auto":
