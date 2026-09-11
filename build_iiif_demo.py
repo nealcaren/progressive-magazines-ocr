@@ -20,7 +20,7 @@ from iiif.static import IIIFStatic
 from iiif_prezi3 import Manifest, config
 
 
-def build(issue_dir, out, prefix, max_pages=None):
+def build(issue_dir, out, prefix, max_pages=None, skip_tiles=False):
     issue_dir = Path(issue_dir); out = Path(out); prefix = prefix.rstrip("/")
     issue = issue_dir.name
     page_jsons = sorted(issue_dir.glob("page_*.json"))
@@ -36,13 +36,29 @@ def build(issue_dir, out, prefix, max_pages=None):
 
     sg = IIIFStatic(dst=str(tiles_root), tilesize=512, api_version="2.0",
                     prefix=f"{prefix}/iiif")
-    for pj in page_jsons:
+    thumbs = {}   # canvas index -> thumbnail dict (added after prezi serialization)
+    for idx, pj in enumerate(page_jsons):
         d = json.loads(pj.read_text())
         n = d["page"]; w = d["width"]; h = d["height"]
         pid = f"{issue}_page_{n:02d}"   # flat id (no slash -> clean static paths)
         img_path = issue_dir / "images" / f"page_{n:02d}.jpg"
-        sg.generate(str(img_path), identifier=pid)   # writes tiles/<pid>/info.json
+        if not skip_tiles:
+            sg.generate(str(img_path), identifier=pid)   # writes tiles/<pid>/info.json
         service_id = f"{prefix}/iiif/{pid}"
+        # thumbnail: pick a width THIS page's tiler actually produced (pyramid
+        # sizes differ per page, so a hardcoded width 404s on some pages)
+        tw, th = 168, round(168 * h / w)
+        info_path = tiles_root / pid / "info.json"
+        if info_path.exists():
+            sizes = [s for s in json.loads(info_path.read_text()).get("sizes", [])
+                     if s.get("width", 0) <= 400]
+            if sizes:
+                best = min(sizes, key=lambda s: abs(s["width"] - 220))
+                tw, th = best["width"], best["height"]
+        thumbs[idx] = {"id": f"{service_id}/full/{tw},/0/default.jpg", "type": "Image",
+                       "format": "image/jpeg", "width": tw, "height": th,
+                       "service": [{"@id": service_id, "@type": "ImageService2",
+                                    "profile": "http://iiif.io/api/image/2/level0.json"}]}
 
         canvas = manifest.make_canvas(
             id=f"{prefix}/{issue}/canvas/{n}", height=h, width=w,
@@ -70,18 +86,35 @@ def build(issue_dir, out, prefix, max_pages=None):
             }, anno_page_id=f"{prefix}/{issue}/textpage/{n}")
 
     (out / issue).mkdir(parents=True, exist_ok=True)
-    (out / issue / "manifest.json").write_text(manifest.json(indent=2))
+    # inject canvas thumbnails (robustly, after prezi serialization)
+    mdict = json.loads(manifest.json())
+    for i, canvas in enumerate(mdict.get("items", [])):
+        if i in thumbs:
+            canvas["thumbnail"] = [thumbs[i]]
+    (out / issue / "manifest.json").write_text(json.dumps(mdict, indent=2))
 
     # TIFY viewer page
-    (out / issue / "index.html").write_text(f"""<!DOCTYPE html><html><head>
+    title = issue.replace('-', ' ').replace('_', ' ').title()
+    (out / issue / "index.html").write_text(f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{issue} — TIFY</title>
+<title>{title}</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tify@0.36.2/dist/tify.css">
-<style>html,body,#tify{{margin:0;height:100%}}</style></head><body>
+<style>
+  html,body,#tify{{margin:0;height:100%}}
+  /* Progressive Magazines house style */
+  #tify{{
+    --tify-base-color:#8b7355;          /* accent: brown */
+    --tify-bg-color:#faf8f4;            /* panels: cream */
+    --tify-text-color:#2a2622;          /* ink */
+    --tify-border-radius:4px;
+    --tify-body-bg:#e8e0d4;             /* viewer canvas: warm gray, not blue-gray */
+    font-family:Georgia,'Times New Roman',serif;
+  }}
+</style></head><body>
 <div id="tify"></div>
 <script type="module">
 import Tify from 'https://cdn.jsdelivr.net/npm/tify@0.36.2/dist/tify.js'
-new Tify({{container:'#tify', manifestUrl:'manifest.json'}})
+new Tify({{container:'#tify', manifestUrl:'manifest.json', language:'en'}})
 </script>
 </body></html>""")
     print(f"Built IIIF + TIFY for {issue}: {len(page_jsons)} pages -> {out/issue}/index.html", flush=True)
@@ -94,5 +127,6 @@ if __name__ == "__main__":
     ap.add_argument("--out", default="iiif_demo")
     ap.add_argument("--prefix", default="http://localhost:8791")
     ap.add_argument("--max-pages", type=int, default=None)
+    ap.add_argument("--skip-tiles", action="store_true", help="Reuse existing tiles; only rebuild manifest + viewer")
     a = ap.parse_args()
-    build(a.issue_dir, a.out, a.prefix, a.max_pages)
+    build(a.issue_dir, a.out, a.prefix, a.max_pages, a.skip_tiles)
