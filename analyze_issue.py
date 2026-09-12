@@ -189,6 +189,10 @@ def build_prompt(pages, printed_toc, single_author, kind):
             t = " ".join(r.get("text", "").split())[:TEXT_CAP]
             lines.append(f"[{i}] label={r.get('label')} x={b[0]} y={b[1]} w={b[2]-b[0]} h={b[3]-b[1]} | {t}")
     ctx = f"\nThis is a {kind}." if kind else ""
+    if kind == "newspaper":
+        ctx += ("\nOUTPUT COMPACTLY: this is a dense multi-page paper — OMIT the "
+                "\"reading_order\" and \"relabel\" arrays entirely (leave them out). Return only "
+                "publication_kind, articles, toc (and needs_image if any). Focus on the article index.")
     if single_author:
         ctx += (f"\nWritten almost entirely by {single_author}; do not hunt per-article bylines — "
                 "author is that name only where explicitly credited otherwise, else null.")
