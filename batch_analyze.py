@@ -78,7 +78,7 @@ def write_results(st, cmap):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("dirs", nargs="+")
+    ap.add_argument("dirs", nargs="*")
     ap.add_argument("--kind", choices=["magazine", "newspaper"], default="newspaper")
     ap.add_argument("--single-author", default=None)
     ap.add_argument("--model", default="google/gemini-3.8-flash:batch")
