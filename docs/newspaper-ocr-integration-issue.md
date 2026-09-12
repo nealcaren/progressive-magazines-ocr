@@ -48,12 +48,25 @@ the algorithm with `ocr_pipeline.py`, and expose the thresholds as constructor
 kwargs (`repetition_min_len`, `repetition_min_reps`) so callers can match the
 production tag instead of subclassing.
 
-### 4. No PDF ingestion
+### 4. No PDF ingestion (and: pick the *largest* embedded image, not the first)
 `Pipeline.ocr` takes an image path. Our inputs are multi-page PDFs; we extract
 the embedded page image when present and fall back to a 300-dpi render
 (`extract_page_image` in `ocr_newspapers.py`). **Request:** a small PDF
 front-end (e.g. `Pipeline.ocr_pdf(path)` or a documented helper) yielding
-per-page PIL images with that embedded-image-first behavior.
+per-page PIL images.
+
+Important refinement we had to add: choose the **largest** embedded image by
+pixel area, not `images[0]`. Google-scanned PDFs (common for these titles) place
+a tiny "Digitized by Google" strip as the first embedded image, so `images[0]`
+yields a ~1000×200 sliver instead of the full page. Selecting max-area fixes it.
+
+### 7. No page-rotation option (sideways broadsheet scans)
+Many broadsheet scans (e.g. *Industrial Worker*, *Appeal to Reason*) come in
+90°-rotated, and the two papers were even scanned in *opposite* directions.
+Layout+OCR on a sideways image is garbage. Production added a `--rotate
+{90,180,270}` (clockwise) option applied to each extracted page before layout.
+**Request:** a `rotate` parameter on the PDF/image front-end (or auto-detect via
+aspect ratio + a quick orientation check).
 
 ### 5. No interactive review-site / OpenSeadragon formatter
 Formatters are `text` / `hocr` / `json`. Our deliverable is an OpenSeadragon
@@ -68,8 +81,22 @@ narrow-column merge, `max_height=600` merge cap, 0.5/0.15 confidence bands).
 Worth recording the reference tag `2025-03-07-col-fix` somewhere so future
 drift from `ocr_pipeline.py` is detectable.
 
+### 8. (downstream, optional) Post-OCR LLM enrichment layer
+Not core to a recognizer, but noting it since it's now part of our "current OCR
+steps": `progressive-magazines-ocr/analyze_issue.py` runs an LLM (Gemini/Claude
+via OpenAI-compatible API) over the finished page JSON to reconstruct reading
+order, segment articles, classify advertisements, link cross-page
+continuations, and emit a per-issue table of contents (`toc.json`) — with a
+targeted image pass only for shredded headlines. It leans on the `status` field
+from #2 and the per-region bbox+text the package already produces. **Not a
+request to build this**, but a documented extension point / stable JSON schema
+(region ids, bbox, label, text, status) would let this layer sit cleanly on top
+of `newspaper-ocr` output.
+
 ## Why it matters
 With 1–2 and 3 resolved, `progressive-magazines-ocr`/`dangerouspress-ocr` could
 `pip install newspaper-ocr` and delete their vendored pipeline copies, ending
 the "update all four scripts" maintenance burden noted in the dangerouspress
-`CLAUDE.md`. 4–5 would let the package produce the full deliverable end-to-end.
+`CLAUDE.md`. 4 (incl. largest-image), 5, and 7 would let the package produce the
+full deliverable end-to-end from raw PDFs, including the awkward Google-scan and
+rotated-broadsheet cases we hit across this collection.
