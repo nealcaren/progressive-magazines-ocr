@@ -5,10 +5,15 @@ radical magazines (*The Woman Rebel*, *Mother Earth*, *The Masses*, *Appeal to
 Reason*, *The Crisis*, and the rest of the SOCI 274 "Role Readings" set).
 
 It reuses the models and layout post-processing proven on the
-[dangerouspress-ocr](../dangerouspress-ocr) project, but is deliberately
-smaller: PDFs come from a **local folder** and the review website is written to
-a **local folder** — no Hugging Face up/download, no R2. These collections fit
-comfortably in a single Longleaf GPU job.
+[dangerouspress-ocr](../dangerouspress-ocr) project. Source PDFs are fetched from
+Internet Archive / marxists.org / the Modernist Journals Project (`sources/`),
+OCR'd on UNC Longleaf, published to Cloudflare R2
+(**https://pages.dangerouspress.org/progressive-magazines/**), mirrored to the
+HF dataset `NealCaren/progressive-magazines-ocr`, and enriched with an LLM
+table-of-contents / reading-order layer (`analyze_issue.py`).
+
+> **To add another publication, follow [`RUNBOOK.md`](RUNBOOK.md)** — the full
+> fetch → stage → OCR → publish → TOC checklist, with every source recorded.
 
 ## Pipeline
 
