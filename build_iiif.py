@@ -160,7 +160,7 @@ _TIFY_HTML = """<!DOCTYPE html><html lang="en"><head>
 <div id="tify"></div>
 <script type="module">
 import Tify from 'https://cdn.jsdelivr.net/npm/tify@0.36.2/dist/tify.js'
-new Tify({container:'#tify', manifestUrl:'manifest.json', language:'en'})
+new Tify({container:'#tify', manifestUrl:'manifest.json', language:'en', urlQueryKey:'tify'})
 </script>
 </body></html>"""
 
@@ -171,8 +171,11 @@ _TYPE_LABEL = {"story": "story", "poem": "poem", "essay": "essay", "article": "a
 
 
 def _reader_href(start):
+    # TIFY reads its state from location.search (NOT the hash) and only when
+    # urlQueryKey is set. Use ?tify=... (query string) to match; reader.html sets
+    # urlQueryKey:'tify'. A hash (#?tify=) is silently ignored -> opens page 1.
     q = urllib.parse.quote(json.dumps({"pages": [int(start)]}, separators=(",", ":")))
-    return f"reader.html#?tify={q}"
+    return f"reader.html?tify={q}"
 
 
 def _pg_badge(pages, start):
