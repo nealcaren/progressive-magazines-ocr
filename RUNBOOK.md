@@ -60,31 +60,73 @@ sbatch longleaf/run_ocr_array.sl          # array over ALL pdfs/*/; skip-existin
 ```
 - **`export PYTHONUTF8=1` is mandatory** (Longleaf's ASCII locale crashes on em-dashes). It's in the .sl files.
 - **Sideways scans:** re-OCR that title with `--rotate {90|180|270}` (clockwise). See `run_fix.sl` for the per-magazine rotation pattern (Industrial Worker = 90 CW, Appeal to Reason = 270 CCW — they were scanned opposite ways). Check orientation first: page dims where width > height = landscape = rotated.
-- **Google-scan multi-image pages:** `ocr_newspapers.py` picks the LARGEST embedded image (not image[0]).
+- **Google-scan multi-image pages:** `ocr_newspapers.py` picks the LARGEST embedded image (not image[0]) — Google PDFs embed a tiny "Digitized by Google" strip as image[0].
+- ⚠️ **Any time you rotate or re-extract page images, you must `--force` re-tile that title at publish (§4)** — the incremental build otherwise keeps the old tiles and the site shows the wrong image.
 - Smoke-test one shard interactively (`srun --pty`) before the array. GPU ≈ 28s/page.
 
 ## 4. Publish — to R2
 
 MUST run on the **login node** (compute nodes have no outbound internet).
+
+⚠️ **`conda activate` SILENTLY FAILS in a non-interactive ssh** (`ssh longleaf '... && cmd &'`
+→ nothing runs, no log, no error). Call the env's python DIRECTLY and run detached via a
+launcher script. This is the reliable pattern (see `run_build_iiif.sh` / `run_sync.sh`):
 ```bash
-conda activate /work/users/n/c/ncaren/envs/progmag-publish
+# on the login node — build into deploy_all (no R2 touch yet)
+cat > ~/run_build_iiif.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
+ENV=/work/users/n/c/ncaren/envs/progmag-publish
+export PATH="$ENV/bin:$PATH"   # so `vips` resolves
 export PYTHONUTF8=1
-python build_iiif.py site --out /work/users/n/c/ncaren/deploy_all \
+cd /work/users/n/c/ncaren/progressive-magazines-ocr
+python -u build_iiif.py site --out /work/users/n/c/ncaren/deploy_all \
     --prefix https://pages.dangerouspress.org/progressive-magazines
+echo "END $(date)"
+EOF
+nohup bash ~/run_build_iiif.sh > ~/build_iiif.log 2>&1 &   # poll build_iiif.log for "END"
+
+# then sync deploy_all -> R2 (also via a nohup'd launcher that sources ~/.r2env):
 source ~/.r2env      # R2_ENDPOINT_URL / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
 export AWS_ACCESS_KEY_ID=$R2_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY=$R2_SECRET_ACCESS_KEY
+export PATH="/work/users/n/c/ncaren/envs/progmag-publish/bin:$PATH"
 aws s3 sync /work/users/n/c/ncaren/deploy_all/ \
     s3://african-american-press-archive/progressive-magazines/ \
     --endpoint-url $R2_ENDPOINT_URL --only-show-errors
 ```
-- `build_iiif` is **incremental** — reuses existing tiles (libvips `dzsave --layout iiif`,
-  ~68 tiles/page); pass `--force` only to re-tile.
-- It splits each issue into `index.html` (Contents landing) + `reader.html` (TIFY viewer,
-  deep-linked `reader.html#?tify={"pages":[N]}`), copies a flat `page_01.jpg` cover, and
-  rebuilds the per-magazine galleries + top archive + `search-index.json`.
-- **`auto_publish.sh <jobid>`** automates this: polls squeue until the OCR job leaves the
-  queue, then builds + syncs. Launch detached: `setsid bash auto_publish.sh <jobid> > auto_publish.log 2>&1 &`
-  (do NOT guard with `pgrep -f auto_publish.sh` — it self-matches the launcher).
+- ⚠️ **Incremental build reuses tiles by `info.json` existence — so if you CHANGED a page
+  image (rotation, largest-image re-extract, new source), the old tiles are kept and the
+  site shows the wrong/old image.** You MUST `--force` re-tile those titles. `build_iiif.py`
+  accepts a single title or issue path, so scope the force:
+  ```bash
+  python -u build_iiif.py site/progressive-woman --out $OUT --prefix $PREFIX --force
+  ```
+  Detect stale tiles first (compares each page image's dims to its tiled `info.json` dims):
+  `python detect_stale_tiles.py` (in repo). This session caught 4 titles this way
+  (progressive-woman=Google-strip 1034×204, appeal-to-reason/industrial-worker=rotation,
+  the-crisis=new MJP source). After force-retiling the affected titles, run a normal (non-force)
+  `build_iiif.py site …` to regenerate all HTML + `search-index.json` reusing the now-correct tiles.
+- **Full `aws s3 sync` is SLOW (~67 min)** — almost all of it is listing/diffing the ~550K tile
+  objects, not uploading. Speed it up by scope:
+  - HTML-only change (TOC/landing/viewer): `aws s3 sync … --exclude "iiif/*"` (seconds).
+  - Re-tiled a few titles: `aws s3 cp deploy_all/iiif/ s3://…/iiif/ --recursive --exclude "*"
+    --include "progressive-woman_*" --include "the-crisis_*" …` (cp overwrites unconditionally,
+    skips the remote listing) — tile dir names are FLAT `iiif/<issue>_page_NN/`.
+- Each issue → `index.html` (Contents landing) + `reader.html` (TIFY viewer) + flat `page_01.jpg`
+  cover; plus per-magazine galleries, top archive, `search-index.json`.
+- **TIFY deep links** go in the QUERY string, not the hash: `reader.html?tify={"pages":[N]}`
+  (URL-encoded) and `reader.html` must init Tify with `urlQueryKey:'tify'`. TIFY reads
+  `location.search` only when `urlQueryKey` is set (defaults to null); a `#?tify=` hash is
+  silently ignored and every link opens page 1. `{"pages":[N]}` selects canvas N (1-based).
+- **Bare directory URLs 404.** The `pages.dangerouspress.org` R2 custom domain serves objects by
+  exact key with NO index-document rewrite, so `…/progressive-magazines/` 404s — the entry URL is
+  `…/progressive-magazines/index.html`. To make bare paths work, add a Cloudflare Transform Rule
+  (Rewrite URL: when URI path ends with `/`, rewrite to `{path}index.html`) — one-time, domain-wide.
+- **`auto_publish.sh <jobid>`** automates build+sync after an OCR job: polls squeue until the job
+  leaves the queue, then builds + syncs. Launch detached: `setsid bash auto_publish.sh <jobid> >
+  auto_publish.log 2>&1 &` (do NOT guard with `pgrep -f auto_publish.sh` — it self-matches the launcher).
+  NOTE: it uses `conda activate` internally — if it no-ops silently, switch it to the direct-env-python
+  pattern above.
 - Cloudflare caches `index.html`/`search-index.json` at the edge; a fresh publish serves
   `cf-cache-status: DYNAMIC`, but negative (404) probes you make before objects land can
   get cached — don't probe URLs before they exist.
