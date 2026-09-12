@@ -229,10 +229,22 @@ def _render_contents(toc):
     return "\n".join(items)
 
 
+def _toc_items(toc_data):
+    """Unified contents list. Newspapers emit an explicit `toc`; magazines emit
+    `articles` (with ads flagged) and no `toc`, so derive one by dropping ads."""
+    d = toc_data or {}
+    if isinstance(d.get("toc"), list) and d["toc"]:
+        return d["toc"]
+    arts = d.get("articles")
+    if isinstance(arts, list) and arts:
+        return [a for a in arts if not a.get("is_advertisement")]
+    return None
+
+
 def _landing_html(magazine, issue, disp, toc_data, n_pages, version, prefix):
     title = title_of(magazine)
     cover = f"{prefix.rstrip('/')}/{issue}/page_01.jpg" if (prefix and issue) else "page_01.jpg"
-    toc = (toc_data or {}).get("toc") if toc_data else None
+    toc = _toc_items(toc_data)
     n_articles = len(toc) if toc else None
     if toc:
         contents = f'<ul class="toc">\n{_render_contents(toc)}\n</ul>'
