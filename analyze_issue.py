@@ -291,7 +291,12 @@ def analyze_text(prompt, model, temps=(0, 0.3, 0.6)):
         try:
             raw = llm([{"role": "user", "content": prompt}], model, json_mode=True,
                       temperature=t, low_reasoning=(i > 0))  # cap reasoning after 1st roll
-            return parse_json(raw)
+            data = parse_json(raw)
+            # A parseable but empty result (no articles/toc) is a model whiff, not a
+            # done issue — treat it like a parse failure so the temp bump re-rolls it.
+            if not any(isinstance(data.get(k), list) and data.get(k) for k in ("articles", "toc")):
+                raise ValueError("empty result: no articles/toc")
+            return data
         except Exception as e:
             last = e
             print(f"  retry (temp {t}, low_reasoning={i>0}): {e}", flush=True)
