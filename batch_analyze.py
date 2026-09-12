@@ -35,6 +35,7 @@ def build_requests(dirs, kind, single_author):
         cmap[cid] = str(d)
         reqs.append({"custom_id": cid, "body": {
             "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0,  # deterministic — default temp yields degenerate JSON
             "response_format": {"type": "json_object"}}})
     return reqs, cmap
 

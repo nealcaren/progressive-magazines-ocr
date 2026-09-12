@@ -48,9 +48,11 @@ def backend():
     sys.exit("No LLM key found (ANTHROPIC_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY).")
 
 
-def llm(messages, model, max_tokens=None, json_mode=False):
+def llm(messages, model, max_tokens=None, json_mode=False, temperature=0, low_reasoning=False):
     """OpenAI-compatible chat call (OpenRouter/OpenAI); Anthropic via its own shape.
-    max_tokens=None lets the model use its full output budget (avoids truncating big TOCs)."""
+    max_tokens=None lets the model use its full output budget (avoids truncating big TOCs).
+    low_reasoning caps Gemini's thinking so dense issues don't burn the whole budget on
+    reasoning and return empty content (finish=error)."""
     kind, default_model, base, key = backend()
     model = model or default_model
     if kind == "anthropic":
@@ -60,7 +62,7 @@ def llm(messages, model, max_tokens=None, json_mode=False):
             json={"model": model, "max_tokens": max_tokens or 32000, "messages": messages})
         r.raise_for_status()
         return "".join(b.get("text", "") for b in r.json().get("content", []))
-    body = {"model": model, "temperature": 0, "messages": messages}
+    body = {"model": model, "temperature": temperature, "messages": messages}
     if max_tokens:
         body["max_tokens"] = max_tokens
     is_claude = "claude" in model or "anthropic" in model
@@ -68,6 +70,10 @@ def llm(messages, model, max_tokens=None, json_mode=False):
         # Claude burns the whole budget on extended thinking; disable it. (Gemini
         # requires reasoning and rejects this flag, so only send it for Claude.)
         body["reasoning"] = {"enabled": False}
+    elif low_reasoning:
+        # Gemini can't disable reasoning, but a low effort cap leaves output budget
+        # for the JSON — otherwise dense issues reason until empty (finish=error).
+        body["reasoning"] = {"effort": "low"}
     if json_mode and not is_claude:      # force valid JSON (Gemini/OpenAI); Claude already emits clean JSON
         body["response_format"] = {"type": "json_object"}
     r = requests.post(f"{base}/chat/completions", timeout=240,
@@ -96,7 +102,55 @@ def vlm_read(img_bytes, instruction, model):
 def parse_json(text):
     text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
     m = re.search(r"\{.*\}", text, re.S)
-    return json.loads(m.group(0) if m else text)
+    blob = m.group(0) if m else text
+    try:
+        return json.loads(blob)
+    except json.JSONDecodeError:
+        return json.loads(_repair_json(blob))  # raises if unrepairable
+
+
+def _repair_json(blob):
+    """Best-effort recovery of a single malformed JSON object: drop a truncated
+    trailing element and re-close open brackets. Good enough to salvage the common
+    "ran out mid-entry" / "unterminated string" cases; raises otherwise."""
+    s, out, stack, in_str, esc = blob, [], [], False, False
+    last_safe = 0  # index in `out` just after the last completed top-level-ish element
+    for ch in s:
+        if in_str:
+            out.append(ch)
+            if esc: esc = False
+            elif ch == "\\": esc = True
+            elif ch == '"': in_str = False
+            continue
+        if ch == '"':
+            in_str = True; out.append(ch); continue
+        if ch in "{[":
+            stack.append(ch); out.append(ch); continue
+        if ch in "}]":
+            if stack: stack.pop()
+            out.append(ch)
+            if not stack: last_safe = len(out)
+            continue
+        if ch == "," and len(stack) == 1:
+            out.append(ch); last_safe = len(out); continue
+        out.append(ch)
+    # Cut any dangling partial element after the last safe boundary, drop trailing comma.
+    salvaged = "".join(out[:last_safe]).rstrip().rstrip(",") if last_safe else "".join(out)
+    # Re-close whatever brackets remain open on the salvaged prefix.
+    depth = []
+    i2, instr2, esc2 = 0, False, False
+    for ch in salvaged:
+        if instr2:
+            if esc2: esc2 = False
+            elif ch == "\\": esc2 = True
+            elif ch == '"': instr2 = False
+            continue
+        if ch == '"': instr2 = True
+        elif ch in "{[": depth.append(ch)
+        elif ch in "}]":
+            if depth: depth.pop()
+    closers = "".join("}" if c == "{" else "]" for c in reversed(depth))
+    return salvaged + closers
 
 
 def load_pages(issue_dir):
@@ -228,6 +282,22 @@ def resolve_shredded(result, issue_dir, pages, model):
     return out
 
 
+def analyze_text(prompt, model, temps=(0, 0.3, 0.6)):
+    """Text pass with parse-failure retries. temp 0 is deterministic, so a bad roll
+    reproduces identically — each retry bumps temperature to perturb the output.
+    parse_json also attempts structural repair before we give up on a roll."""
+    last = None
+    for i, t in enumerate(temps):
+        try:
+            raw = llm([{"role": "user", "content": prompt}], model, json_mode=True,
+                      temperature=t, low_reasoning=(i > 0))  # cap reasoning after 1st roll
+            return parse_json(raw)
+        except Exception as e:
+            last = e
+            print(f"  retry (temp {t}, low_reasoning={i>0}): {e}", flush=True)
+    raise last
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("issue_dir")
@@ -246,7 +316,7 @@ def main():
     if a.emit_prompt:
         print(prompt); return
 
-    result = parse_json(llm([{"role": "user", "content": prompt}], a.model, json_mode=True))
+    result = analyze_text(prompt, a.model)
     result["_printed_toc_present"] = bool(printed_toc)
     result["_printed_toc_recovered_from_image"] = recovered
     if not a.no_image and result.get("needs_image"):
