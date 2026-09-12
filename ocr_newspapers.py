@@ -443,18 +443,37 @@ def _page_coverage(bboxes, w, h):
     return area / float(w * h)
 
 # ─── PDF extraction ───
-def extract_page_image(doc, page_idx, output_path):
+def extract_page_image(doc, page_idx, output_path, rotate=0):
+    """Save the page's main scan. rotate = clockwise degrees (0/90/180/270) to
+    upright sideways scans. Picks the LARGEST embedded image, not images[0] —
+    Google-scanned PDFs put a small 'Digitized by Google' strip first."""
     page = doc[page_idx]
     images = page.get_images()
     if images:
-        xref = images[0][0]
-        pix = fitz.Pixmap(doc, xref)
+        best_xref, best_area = images[0][0], -1
+        for im in images:
+            xref = im[0]
+            try:
+                info = doc.extract_image(xref)
+                area = info.get("width", 0) * info.get("height", 0)
+            except Exception:
+                area = 0
+            if area > best_area:
+                best_area, best_xref = area, xref
+        pix = fitz.Pixmap(doc, best_xref)
         if pix.n > 4: pix = fitz.Pixmap(fitz.csRGB, pix)
         pix.save(str(output_path))
-        w, h = pix.width, pix.height; pix = None; return w, h
-    pix = page.get_pixmap(dpi=300)
-    pix.save(str(output_path))
-    w, h = pix.width, pix.height; pix = None; return w, h
+        pix = None
+    else:
+        pix = page.get_pixmap(dpi=300)
+        pix.save(str(output_path))
+        pix = None
+    if rotate % 360:
+        # PIL rotate() is counter-clockwise; negate for clockwise degrees
+        img = Image.open(output_path).rotate(-rotate, expand=True)
+        img.save(str(output_path))
+    w, h = Image.open(output_path).size
+    return w, h
 
 # ─── Page viewer HTML ───
 def generate_page_viewer(img_rel, img_w, img_h, regions, output_path, page_num, total_pages, issue_name):
@@ -505,7 +524,7 @@ def generate_index(output_dir, issue_name, page_summaries):
     (output_dir / "index.html").write_text(idx)
 
 # ─── Process one PDF ───
-def process_one_pdf(pdf_path, output_dir, layout_model):
+def process_one_pdf(pdf_path, output_dir, layout_model, rotate=0):
     issue_name = pdf_path.stem
     output_dir.mkdir(parents=True, exist_ok=True)
     images_dir = output_dir / "images"; images_dir.mkdir(exist_ok=True)
@@ -519,7 +538,7 @@ def process_one_pdf(pdf_path, output_dir, layout_model):
         t0 = time.time()
         img_fn = f"page_{page_num:02d}.jpg"
         img_path = images_dir / img_fn
-        img_w, img_h = extract_page_image(doc, page_idx, img_path)
+        img_w, img_h = extract_page_image(doc, page_idx, img_path, rotate=rotate)
         full_image = Image.open(img_path).convert("RGB")
         for result in layout_model.predict(str(img_path)):
             boxes_raw = result["boxes"]
@@ -651,6 +670,9 @@ if __name__ == "__main__":
     parser.add_argument("--shard", default=None, metavar="I/N",
                         help="Process only PDFs where index %% N == I (for SLURM array jobs, "
                              "e.g. --shard $SLURM_ARRAY_TASK_ID/$SLURM_ARRAY_TASK_COUNT)")
+    parser.add_argument("--rotate", type=int, default=0, choices=[0, 90, 180, 270],
+                        help="Rotate every page image clockwise by this many degrees "
+                             "(fixes sideways scans, e.g. --rotate 90)")
     args = parser.parse_args()
 
     if args.no_cover_ocr:
@@ -714,7 +736,7 @@ if __name__ == "__main__":
             continue
 
         print(f"{'='*60}\n[{i+1}/{len(pdf_files)}] {issue_name}", flush=True)
-        summaries = process_one_pdf(pdf_path, issue_out, layout_model)
+        summaries = process_one_pdf(pdf_path, issue_out, layout_model, rotate=args.rotate)
         total = sum(s["time"] for s in summaries)
         print(f"  Done: {len(summaries)} pages in {total:.0f}s", flush=True)
 

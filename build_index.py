@@ -12,8 +12,52 @@ Usage:
     python build_index.py site/woman-rebel --title "The Woman Rebel"
 """
 
-import json, html, argparse
+import json, html, argparse, re
 from pathlib import Path
+
+_MONTHS = ["", "January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December"]
+_MON_ABBR = {m[:3].lower(): i for i, m in enumerate(_MONTHS) if m}
+
+# Woman Rebel dirs carry only volume/number (v1n01..v1n07); the publication
+# printed no ISO date, so these come from the OCR'd front-page mastheads.
+_WOMAN_REBEL = {
+    "v1n01": ("1914-03-01", "March 1914"),
+    "v1n02": ("1914-04-01", "April 1914"),
+    "v1n03": ("1914-05-01", "May 1914"),
+    "v1n04": ("1914-06-01", "June 1914"),
+    "v1n05": ("1914-07-01", "July 1914"),
+    "v1n06": ("1914-08-01", "August 1914"),
+    "v1n07": ("1914-09-01", "September–October 1914"),
+}
+
+
+def issue_date(magazine, name):
+    """Normalize a heterogeneous issue-dir name to (iso_date | None, label).
+
+    iso_date (YYYY-MM-DD) is the chronological sort key; label is the natural-
+    language display string ("May 1911" for monthlies, "January 4, 1913" for
+    weeklies). Handles every naming pattern in the archive; see CLAUDE notes."""
+    if magazine == "woman-rebel":
+        m = re.search(r"v\d+n\d+", name)
+        if m and m.group(0) in _WOMAN_REBEL:
+            return _WOMAN_REBEL[m.group(0)]
+    # embedded month-name form, e.g. industrial-worker "…-sep-05-1912-iw"
+    m = re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)-(\d{1,2})-(19\d\d)", name.lower())
+    if m:
+        mo, d, y = _MON_ABBR[m.group(1)], int(m.group(2)), int(m.group(3))
+        return (f"{y:04d}-{mo:02d}-{d:02d}", f"{_MONTHS[mo]} {d}, {y}")
+    # full ISO date, e.g. "womans-journal_1913-01-04"
+    m = re.search(r"(19\d\d)-(\d\d)-(\d\d)", name)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return (f"{y:04d}-{mo:02d}-{d:02d}", f"{_MONTHS[mo]} {d}, {y}")
+    # year-month only, e.g. "the-masses_1911-01" (monthly)
+    m = re.search(r"(19\d\d)-(\d\d)(?!\d)", name)
+    if m:
+        y, mo = int(m.group(1)), int(m.group(2))
+        return (f"{y:04d}-{mo:02d}-01", f"{_MONTHS[mo]} {y}")
+    return (None, None)
 
 
 def _issue_meta(issue_dir):
@@ -82,7 +126,8 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 </header>
 <div class="controls">
   <input type="search" id="search" placeholder="Filter by issue name...">
-  <button class="sort-btn active" data-sort="name">A-Z</button>
+  <button class="sort-btn active" data-sort="date">By date</button>
+  <button class="sort-btn" data-sort="name">A-Z</button>
   <button class="sort-btn" data-sort="pages">By pages</button>
   <span class="count" id="count"></span>
 </div>
@@ -91,12 +136,13 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 </div>
 <script>
 let issues = [];
-let currentSort = 'name';
+let currentSort = 'date';
 const IMG_BASE = __IMG_BASE__;  // "" -> local images/, or an R2 base URL
 
 function displayTitle(name) {
   return name.replace(/[-_]+/g, ' ').replace(/\\b\\w/g, c => c.toUpperCase());
 }
+function issueLabel(issue) { return issue.label || displayTitle(issue.name); }
 function thumbUrl(name) {
   return IMG_BASE ? `${IMG_BASE}/${name}/page_01.jpg` : `${name}/images/page_01.jpg`;
 }
@@ -115,9 +161,9 @@ function renderGrid(filtered) {
       : `<div class="pipeline-badge old">Needs reprocessing</div>`;
     return `<div class="${cardClass}">
       <a href="${issue.name}/index.html">
-        <div class="thumb"><img src="${thumbUrl(issue.name)}" loading="lazy" alt="${displayTitle(issue.name)}"></div>
+        <div class="thumb"><img src="${thumbUrl(issue.name)}" loading="lazy" alt="${issueLabel(issue)}"></div>
         <div class="info">
-          <div class="title">${displayTitle(issue.name)}</div>
+          <div class="title">${issueLabel(issue)}</div>
           <div class="meta">${issue.pages} pages</div>
           ${badge}
         </div>
@@ -131,8 +177,10 @@ function renderGrid(filtered) {
 
 function sortIssues(list, mode) {
   const sorted = [...list];
-  if (mode === 'pages') sorted.sort((a, b) => b.pages - a.pages || a.name.localeCompare(b.name));
-  else sorted.sort((a, b) => a.name.localeCompare(b.name));
+  const byDate = (a, b) => (a.date || '9999-99-99').localeCompare(b.date || '9999-99-99') || a.name.localeCompare(b.name);
+  if (mode === 'pages') sorted.sort((a, b) => b.pages - a.pages || byDate(a, b));
+  else if (mode === 'name') sorted.sort((a, b) => a.name.localeCompare(b.name));
+  else sorted.sort(byDate);
   return sorted;
 }
 
@@ -140,7 +188,7 @@ function update() {
   const query = document.getElementById('search').value.toLowerCase();
   let filtered = issues;
   if (query) filtered = issues.filter(i =>
-    i.name.toLowerCase().includes(query) || displayTitle(i.name).toLowerCase().includes(query));
+    i.name.toLowerCase().includes(query) || issueLabel(i).toLowerCase().includes(query));
   renderGrid(sortIssues(filtered, currentSort));
 }
 
@@ -177,12 +225,17 @@ def build(output_dir, title="Progressive Magazines — OCR Review", image_base="
     manifest = []
     for d in issues:
         n_pages, version, processed_at = _issue_meta(d)
+        iso, label = issue_date(output_dir.name, d.name)
         manifest.append({
             "name": d.name,
             "pages": n_pages,
             "version": version,
             "processed_at": processed_at,
+            "date": iso,
+            "label": label,
         })
+    # chronological by default (undated issues sort last, then by name)
+    manifest.sort(key=lambda r: (r["date"] or "9999-99-99", r["name"]))
 
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
     page = (_PAGE_TEMPLATE

@@ -21,14 +21,17 @@ Output layout under --out (upload verbatim to R2 under the prefix's path):
 
 Reusable for dangerouspress: same region-JSON shape in, IIIF out.
 """
-import os, sys, json, shutil, subprocess, argparse
+import os, sys, json, shutil, subprocess, argparse, html, urllib.parse
 from pathlib import Path
 from iiif_prezi3 import Manifest, config
+import build_index  # shares issue_date() for consistent labels/sorting
 
 VIPS = shutil.which("vips") or "/opt/homebrew/bin/vips"
 
 TITLES = {"masses": "The Masses", "woman-rebel": "The Woman Rebel",
-          "the-crisis": "The Crisis", "mother-earth": "Mother Earth"}
+          "the-crisis": "The Crisis", "mother-earth": "Mother Earth",
+          "the-forerunner": "The Forerunner", "appeal-to-reason": "Appeal to Reason",
+          "womans-journal": "Woman's Journal", "progressive-woman": "Progressive Woman"}
 
 
 def title_of(slug):
@@ -49,7 +52,7 @@ def _tile(img_path, out_dir, id_base, skip):
     return int(widths[0]) if widths else 336
 
 
-def build_issue(issue_dir, out, prefix):
+def build_issue(issue_dir, out, prefix, force=False):
     issue = issue_dir.name
     magazine = issue_dir.parent.name
     page_jsons = sorted(issue_dir.glob("page_*.json"))
@@ -60,7 +63,9 @@ def build_issue(issue_dir, out, prefix):
 
     config.configs['helpers.auto_fields.AutoLang'].auto_lang = "en"
     man_id = f"{prefix}/{magazine}/{issue}/manifest.json"
-    manifest = Manifest(id=man_id, label={"en": [f"{title_of(magazine)} — {issue}"]})
+    _, lab = build_index.issue_date(magazine, issue)
+    disp = lab or issue
+    manifest = Manifest(id=man_id, label={"en": [f"{title_of(magazine)} — {disp}"]})
 
     thumbs = {}
     for idx, pj in enumerate(page_jsons):
@@ -68,7 +73,10 @@ def build_issue(issue_dir, out, prefix):
         n = d["page"]; w = d["width"]; h = d["height"]
         pid = f"{issue}_page_{n:02d}"
         img = issue_dir / "images" / f"page_{n:02d}.jpg"
-        tw = _tile(img, tiles_root / pid, id_base, skip=not img.exists())
+        # reuse tiles already generated (idempotent re-publish); --force overrides
+        already = (tiles_root / pid / "info.json").exists()
+        tw = _tile(img, tiles_root / pid, id_base,
+                   skip=not img.exists() or (already and not force))
         service_id = f"{id_base}/{pid}"
 
         canvas = manifest.make_canvas(id=f"{prefix}/{magazine}/{issue}/canvas/{n}",
@@ -104,11 +112,36 @@ def build_issue(issue_dir, out, prefix):
         if i in thumbs:
             c["thumbnail"] = [thumbs[i]]
     (issue_out / "manifest.json").write_text(json.dumps(mdict, indent=2))
-    (issue_out / "index.html").write_text(_TIFY_HTML.replace("__TITLE__", title_of(magazine)))
+    # reader.html = the TIFY page-turner; index.html = the Contents landing page
+    (issue_out / "reader.html").write_text(_TIFY_HTML.replace("__TITLE__", f"{title_of(magazine)} — {disp}"))
     # carry full_text.json so galleries/search have page counts + text
     ft = issue_dir / "full_text.json"
+    version = None
     if ft.exists():
         shutil.copy(ft, issue_out / "full_text.json")
+        try:
+            fp = json.loads(ft.read_text()).get("pages", [])
+            version = fp[0].get("version") if fp else None
+        except Exception:
+            pass
+    # optional enrichment: analyze_issue.py writes toc.json alongside the OCR
+    toc_data = None
+    tj = issue_dir / "toc.json"
+    if tj.exists():
+        try:
+            toc_data = json.loads(tj.read_text())
+            shutil.copy(tj, issue_out / "toc.json")
+        except Exception:
+            toc_data = None
+    (issue_out / "index.html").write_text(
+        _landing_html(magazine, issue, disp, toc_data, len(page_jsons), version, prefix))
+    # flat cover JPEG at out/<issue>/page_01.jpg — gallery + archive thumbnails
+    # load from {prefix}/{issue}/page_01.jpg (the tiled viewer uses IIIF instead)
+    cover = issue_dir / "images" / "page_01.jpg"
+    if cover.exists():
+        cover_out = out / issue
+        cover_out.mkdir(parents=True, exist_ok=True)
+        shutil.copy(cover, cover_out / "page_01.jpg")
     return len(page_jsons)
 
 
@@ -132,7 +165,167 @@ new Tify({container:'#tify', manifestUrl:'manifest.json', language:'en'})
 </body></html>"""
 
 
-def main(inp, out, prefix):
+_TYPE_LABEL = {"story": "story", "poem": "poem", "essay": "essay", "article": "article",
+               "novel_chapter": "novel", "series": "series", "editorial": "editorial",
+               "department": "department", "advertisement": "advertisement"}
+
+
+def _reader_href(start):
+    q = urllib.parse.quote(json.dumps({"pages": [int(start)]}, separators=(",", ":")))
+    return f"reader.html#?tify={q}"
+
+
+def _pg_badge(pages, start):
+    if not pages:
+        return f'p.&nbsp;<b>{start}</b>'
+    pages = sorted(set(pages))
+    # collapse consecutive pages into runs: [[1,2,3,4,5],[7]] -> ranges
+    runs = [[pages[0]]]
+    for p in pages[1:]:
+        (runs[-1].append(p) if p == runs[-1][-1] + 1 else runs.append([p]))
+    def fmt(run, jump):
+        cls = ' class="jump"' if jump else ""
+        s = f'{run[0]}' if len(run) == 1 else f'{run[0]}&ndash;{run[-1]}'
+        return f'<b{cls}>{s}</b>'
+    if len(runs) == 1:                                   # fully continuous
+        lead = "p." if len(pages) == 1 else "pp."
+        return f'{lead}&nbsp;{fmt(runs[0], False)}'
+    parts = [fmt(runs[0], False)] + [fmt(r, True) for r in runs[1:]]  # gaps -> jump-coloured
+    return f'pp.&nbsp;{", ".join(parts)} &#8599;'
+
+
+def _toc_entry(e):
+    esc = html.escape
+    start = e.get("start_page") or (e.get("pages") or [1])[0]
+    title = esc(e.get("title", "Untitled"))
+    meta = []
+    if e.get("author"):
+        conf = ' <span class="attrib">author?</span>' if e.get("author_confidence") == "low" else ""
+        meta.append(f'<span class="byline">{esc(e["author"])}{conf}</span>')
+    t = e.get("type")
+    if t and t not in ("article", "department"):
+        meta.append(f'<span class="kind">{_TYPE_LABEL.get(t, t)}</span>')
+    metahtml = " &middot; ".join(meta)
+    metahtml = f'<span class="byline-wrap">{metahtml}</span>' if metahtml else ""
+    return (f'<a class="entry" href="{_reader_href(start)}">'
+            f'<span><span class="title">{title}</span>{metahtml}</span>'
+            f'<span class="pg">{_pg_badge(e.get("pages"), start)}</span></a>')
+
+
+def _render_contents(toc):
+    tops = [e for e in toc if not e.get("parent")]
+    kids = {}
+    for e in toc:
+        if e.get("parent"):
+            kids.setdefault(e["parent"], []).append(e)
+    items = []
+    for e in tops:
+        sub = kids.get(e.get("title"), [])
+        li = f'<li class="{ "dept" if sub else "" }'.rstrip() + '">' + _toc_entry(e)
+        if sub:
+            li += '<ul class="sub">' + "".join(f"<li>{_toc_entry(s)}</li>" for s in sub) + "</ul>"
+        li += "</li>"
+        items.append(li)
+    return "\n".join(items)
+
+
+def _landing_html(magazine, issue, disp, toc_data, n_pages, version, prefix):
+    title = title_of(magazine)
+    cover = f"{prefix.rstrip('/')}/{issue}/page_01.jpg" if (prefix and issue) else "page_01.jpg"
+    toc = (toc_data or {}).get("toc") if toc_data else None
+    n_articles = len(toc) if toc else None
+    if toc:
+        contents = f'<ul class="toc">\n{_render_contents(toc)}\n</ul>'
+    else:
+        contents = ('<p class="pending">Contents for this issue are being prepared. '
+                    'Use &ldquo;Read this issue&rdquo; to page through it now.</p>')
+    meta_rows = [f"<dt>Pages</dt><dd>{n_pages}</dd>"]
+    if n_articles:
+        meta_rows.append(f"<dt>Articles</dt><dd>{n_articles}</dd>")
+    meta_rows.append(f"<dt>Issue</dt><dd>{html.escape(disp)}</dd>")
+    if version:
+        meta_rows.append(f"<dt>OCR</dt><dd>{html.escape(version)}</dd>")
+    return _LANDING_TMPL \
+        .replace("__TITLE__", html.escape(title)) \
+        .replace("__DISP__", html.escape(disp)) \
+        .replace("__PUB__", magazine) \
+        .replace("__COVER__", html.escape(cover)) \
+        .replace("__CONTENTS__", contents) \
+        .replace("__META__", "".join(meta_rows)) \
+        .replace("__READ__", _reader_href(1))
+
+
+_LANDING_TMPL = """<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ — __DISP__</title>
+<style>
+:root{--paper:#f4f1eb;--ink:#2a2622;--accent:#8b7355;--rule:#c9b896;--muted:#8a7d6d;
+ --card:#fbf9f4;--line:#d9cebb;--jump:#8c3a2b;--header:#2a2622;--hink:#e8e0d4;--hdim:#9a8b74}
+@media(prefers-color-scheme:dark){:root{--paper:#1c1916;--ink:#e9e1d4;--accent:#c2a578;
+ --rule:#4a4034;--muted:#9c8f7c;--card:#252019;--line:#3a332a;--jump:#d68b6f;--header:#161310;--hink:#e9e1d4;--hdim:#9c8f7c}}
+:root[data-theme=dark]{--paper:#1c1916;--ink:#e9e1d4;--accent:#c2a578;--rule:#4a4034;--muted:#9c8f7c;--card:#252019;--line:#3a332a;--jump:#d68b6f;--header:#161310;--hink:#e9e1d4;--hdim:#9c8f7c}
+:root[data-theme=light]{--paper:#f4f1eb;--ink:#2a2622;--accent:#8b7355;--rule:#c9b896;--muted:#8a7d6d;--card:#fbf9f4;--line:#d9cebb;--jump:#8c3a2b;--header:#2a2622;--hink:#e8e0d4;--hdim:#9a8b74}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:Georgia,'Times New Roman',serif;line-height:1.5}
+a{color:inherit}
+.dbl{border:0;border-top:2px solid var(--ink);box-shadow:0 3px 0 -1px var(--paper),0 4px 0 -1px var(--ink);margin:0}
+header{background:var(--header);color:var(--hink);padding:20px 24px 26px}
+.wrap{max-width:1080px;margin:0 auto}
+.crumb{font-size:12.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--hdim);font-family:system-ui,sans-serif}
+.crumb a{text-decoration:none}.crumb a:hover{text-decoration:underline}
+.mast{font-size:clamp(30px,5vw,50px);font-weight:800;letter-spacing:.02em;margin:14px 0 2px;text-wrap:balance}
+.iline{font-size:15px;color:var(--hdim);letter-spacing:.04em;font-family:system-ui,sans-serif}
+.grid{max-width:1080px;margin:32px auto 60px;padding:0 24px;display:grid;grid-template-columns:1fr 288px;gap:44px;align-items:start}
+@media(max-width:760px){.grid{grid-template-columns:1fr;gap:32px}}
+.lbl{font-family:system-ui,sans-serif;font-size:12px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+.toc{list-style:none;margin:0;padding:0}
+.toc>li{padding:11px 0;border-bottom:1px solid var(--line)}
+.toc>li:last-child{border-bottom:0}
+.entry{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:baseline;text-decoration:none}
+.entry:hover .title{color:var(--accent)}
+.title{font-size:19px;font-weight:700;text-wrap:balance;transition:color .12s}
+.byline-wrap{display:block;font-size:14px;color:var(--muted);margin-top:2px}
+.byline{font-style:italic}.kind{font-family:system-ui,sans-serif;font-size:12.5px;letter-spacing:.03em}
+.pg{font-variant-numeric:tabular-nums;font-size:14px;color:var(--muted);font-family:system-ui,sans-serif;white-space:nowrap;padding-top:3px}
+.pg b{color:var(--ink);font-weight:700}.jump{color:var(--jump);font-weight:700}
+.dept>.entry .title{font-size:16px}
+.sub{list-style:none;margin:8px 0 2px;padding:0 0 0 22px;border-left:2px solid var(--rule)}
+.sub li{padding:7px 0}.sub .title{font-size:15.5px;font-weight:600}.sub .byline-wrap{font-size:13px}
+.attrib{font-size:11px;color:var(--muted);font-family:system-ui,sans-serif;border:1px solid var(--line);border-radius:3px;padding:0 5px;margin-left:6px}
+.pending{color:var(--muted);font-style:italic}
+.rail{display:flex;flex-direction:column;gap:18px}
+.cover{background:var(--card);border:1px solid var(--line);padding:10px;box-shadow:0 2px 10px rgba(0,0,0,.06)}
+.cover img{display:block;width:100%;height:auto;border:1px solid var(--line)}
+.read{display:block;text-align:center;text-decoration:none;background:var(--accent);color:#fff;font-family:system-ui,sans-serif;font-weight:700;font-size:15px;letter-spacing:.03em;padding:13px;border-radius:4px}
+.read:hover{filter:brightness(1.07)}.read:focus-visible{outline:3px solid var(--jump);outline-offset:2px}
+.meta{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:14px 16px;font-family:system-ui,sans-serif;font-size:13px}
+.meta dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 12px}
+.meta dt{color:var(--muted)}.meta dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.slink{font-family:system-ui,sans-serif;font-size:13.5px;text-align:center}
+.slink a{color:var(--accent);font-weight:600;text-decoration:none}.slink a:hover{text-decoration:underline}
+</style></head><body>
+<header><div class="wrap">
+ <div class="crumb"><a href="../index.html">Progressive Magazines Archive</a> / <a href="index.html">__TITLE__</a></div>
+ <div class="mast">__TITLE__</div>
+ <div class="iline">__DISP__</div>
+</div></header><hr class="dbl">
+<div class="grid">
+ <main><p class="lbl">Contents</p>__CONTENTS__</main>
+ <aside class="rail">
+  <a class="read" href="__READ__">Read this issue &rarr;</a>
+  <div class="cover"><img src="__COVER__" loading="lazy" alt="Cover"></div>
+  <div class="meta"><dl>__META__</dl></div>
+  <div class="slink"><a href="../search.html?pub=__PUB__">Search this publication &rarr;</a></div>
+ </aside>
+</div>
+<script>
+// keep the reader's #?tify=… fragment when arriving via a deep link is handled by reader.html;
+// here we simply ensure in-page anchors work. No-op placeholder for future reflow toggle.
+</script>
+</body></html>"""
+
+
+def main(inp, out, prefix, force=False):
     inp = Path(inp); out = Path(out)
     if list(inp.glob("page_*.json")):          # single issue
         issues = [inp]
@@ -141,7 +334,7 @@ def main(inp, out, prefix):
                   if d.is_dir() and list(d.glob("page_*.json"))]
     total_pages = 0
     for iss in issues:
-        p = build_issue(iss, out, prefix)
+        p = build_issue(iss, out, prefix, force=force)
         total_pages += p
         print(f"  {iss.parent.name}/{iss.name}: {p} pages", flush=True)
 
@@ -163,5 +356,6 @@ if __name__ == "__main__":
     ap.add_argument("input", help="issue dir, magazine dir, or archive root")
     ap.add_argument("--out", required=True)
     ap.add_argument("--prefix", required=True, help="public base URL (R2) the IIIF ids resolve against")
+    ap.add_argument("--force", action="store_true", help="re-tile even if tiles already exist")
     a = ap.parse_args()
-    main(a.input, a.out, a.prefix)
+    main(a.input, a.out, a.prefix, force=a.force)
