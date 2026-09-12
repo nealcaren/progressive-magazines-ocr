@@ -40,27 +40,36 @@ def backend():
     if os.getenv("ANTHROPIC_API_KEY"):
         return ("anthropic", "claude-sonnet-5", None, os.environ["ANTHROPIC_API_KEY"])
     if os.getenv("OPENROUTER_API_KEY"):
-        return ("openrouter", "anthropic/claude-sonnet-5",
+        # Gemini 3.8 flash: strong OCR, ~4x cheaper than Sonnet, matches it on structure.
+        return ("openrouter", "google/gemini-3.8-flash",
                 "https://openrouter.ai/api/v1", os.environ["OPENROUTER_API_KEY"])
     if os.getenv("OPENAI_API_KEY"):
         return ("openai", "gpt-4o", "https://api.openai.com/v1", os.environ["OPENAI_API_KEY"])
     sys.exit("No LLM key found (ANTHROPIC_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY).")
 
 
-def llm(messages, model, max_tokens=8000):
-    """OpenAI-compatible chat call (OpenRouter/OpenAI); Anthropic via its own shape."""
+def llm(messages, model, max_tokens=None, json_mode=False):
+    """OpenAI-compatible chat call (OpenRouter/OpenAI); Anthropic via its own shape.
+    max_tokens=None lets the model use its full output budget (avoids truncating big TOCs)."""
     kind, default_model, base, key = backend()
     model = model or default_model
     if kind == "anthropic":
-        # Anthropic messages API expects system separate; here we keep it simple.
-        r = requests.post("https://api.anthropic.com/v1/messages", timeout=180,
+        # Anthropic requires max_tokens; use a high default when unset.
+        r = requests.post("https://api.anthropic.com/v1/messages", timeout=240,
             headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
-            json={"model": model, "max_tokens": max_tokens, "messages": messages})
+            json={"model": model, "max_tokens": max_tokens or 32000, "messages": messages})
         r.raise_for_status()
         return "".join(b.get("text", "") for b in r.json().get("content", []))
-    body = {"model": model, "max_tokens": max_tokens, "temperature": 0, "messages": messages}
-    if kind == "openrouter":
-        body["reasoning"] = {"enabled": False}   # structured extraction; no extended thinking
+    body = {"model": model, "temperature": 0, "messages": messages}
+    if max_tokens:
+        body["max_tokens"] = max_tokens
+    is_claude = "claude" in model or "anthropic" in model
+    if kind == "openrouter" and is_claude:
+        # Claude burns the whole budget on extended thinking; disable it. (Gemini
+        # requires reasoning and rejects this flag, so only send it for Claude.)
+        body["reasoning"] = {"enabled": False}
+    if json_mode and not is_claude:      # force valid JSON (Gemini/OpenAI); Claude already emits clean JSON
+        body["response_format"] = {"type": "json_object"}
     r = requests.post(f"{base}/chat/completions", timeout=240,
         headers={"Authorization": f"Bearer {key}"}, json=body)
     r.raise_for_status()
@@ -105,24 +114,28 @@ def crop(issue_dir, page_no, box, pad=0):
     buf = io.BytesIO(); c.save(buf, "JPEG"); return buf.getvalue()
 
 
-def recover_contents(pages, issue_dir, model):
-    """If a CONTENTS/INDEX heading exists but its text is nearly empty, read it from
-    the image so the text pass gets the printed TOC as gold standard."""
+def recover_contents(pages, issue_dir, model, allow_image=True):
+    """Find the printed contents. First try TEXT — join the regions directly below a
+    CONTENTS/INDEX heading (the list often OCRs into its own region without the word
+    "CONTENTS"). Only if that's too short and images are allowed, read it from the image.
+    Returns (text|None, recovered_from_image_bool)."""
     for p in pages[:2]:
         regs = p.get("regions", [])
         for i, r in enumerate(regs):
             if not re.search(r"\bCONTENTS\b|\bINDEX\b", r.get("text", ""), re.I):
                 continue
-            # gather this heading + the block just below it (same column-ish)
             hx1, hy1, hx2, hy2 = r["bbox"]
-            box = [hx1, hy1, hx2, min(p.get("height", hy2 + 2500), hy2 + 2400)]
+            ybot = min(p.get("height", hy2 + 2500), hy2 + 2400)
+            # text join: heading + regions below it in the same column band
             joined = " ".join(rr.get("text", "") for rr in regs
-                              if rr["bbox"][1] >= hy1 and rr["bbox"][1] < box[3] and abs(rr["bbox"][0]-hx1) < 1200)
+                              if rr["bbox"][1] >= hy1 and rr["bbox"][1] < ybot and abs(rr["bbox"][0] - hx1) < 1400).strip()
             if len(joined) >= CONTENTS_MIN:
-                return joined, False               # already captured in OCR
-            img = crop(issue_dir, p["page"], box, pad=30)
+                return joined, False               # captured in OCR text — no image needed
+            if not allow_image:
+                return (joined or None), False
+            img = crop(issue_dir, p["page"], [hx1, hy1, hx2, ybot], pad=30)
             if not img:
-                return None, False
+                return (joined or None), False
             txt = vlm_read(img, "This is a magazine table-of-contents block. Transcribe every line "
                                 "(title, author, page number) exactly, one entry per line.", model)
             return txt, True                       # recovered from image
@@ -153,7 +166,15 @@ Rules:
   list every page an article touches in "pages".
 - Bylines ("By X" / lone name by a title) => author + relabel "byline". Bare numbers => "folio".
   Repeated masthead at page top => "running_head". "* * *" => "section_break".
-- A department (e.g. a review column) is one toc entry; its sub-sections get parent=<department title>.
+- ENRICH beyond the printed TOC: fill each entry's author from ANY byline OR end-of-piece
+  SIGNATURE in its region text (e.g. a name on its own line after the last paragraph), even
+  when the printed contents omits it — set author_confidence:"low" when inferred from a
+  trailing signature. Add authors the printed TOC leaves out.
+- BE MORE DETAILED THAN THE PRINTED TOC. A department/column (e.g. "Along the Color
+  Line", "Opinion", "Editorial") is one toc entry, and EACH of its detected sub-sections
+  (e.g. "The Ghetto", "Gompers", "Voting") is ALSO a toc entry with parent=<department
+  title> and its own start_page — even if the printed contents lists only the department.
+  The printed TOC is the backbone; enrich it with every sub-heading we detected.
 - If publication_kind is newspaper there is usually no printed contents — still produce
   "toc" as the front-to-back article index (headline + subhead-as-author-ish where useful).
 - A title that is a broken fragment of a larger headline => list in needs_image with sibling ids."""
@@ -215,20 +236,13 @@ def main():
     a = ap.parse_args()
 
     pages = load_pages(a.issue_dir)
-    printed_toc, recovered = (None, False)
-    if not a.no_image:
-        printed_toc, recovered = recover_contents(pages, a.issue_dir, a.model)
-    if printed_toc is None:      # fall back to whatever text OCR captured
-        for p in pages[:2]:
-            for r in p.get("regions", []):
-                if re.search(r"\bCONTENTS\b|\bINDEX\b", r.get("text", ""), re.I) and len(r.get("text", "")) >= CONTENTS_MIN:
-                    printed_toc = r["text"]
+    printed_toc, recovered = recover_contents(pages, a.issue_dir, a.model, allow_image=not a.no_image)
 
     prompt = build_prompt(pages, printed_toc, a.single_author, a.kind)
     if a.emit_prompt:
         print(prompt); return
 
-    result = parse_json(llm([{"role": "user", "content": prompt}], a.model, max_tokens=16000))
+    result = parse_json(llm([{"role": "user", "content": prompt}], a.model, json_mode=True))
     result["_printed_toc_present"] = bool(printed_toc)
     result["_printed_toc_recovered_from_image"] = recovered
     if not a.no_image and result.get("needs_image"):
