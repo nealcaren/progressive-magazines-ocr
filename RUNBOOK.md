@@ -219,7 +219,31 @@ Keys live in the Mac shell env (OPENROUTER_API_KEY etc.) — keep them OFF the s
 Run `analyze_issue.py`/`batch_analyze.py` from the Mac (pull the small `full_text.json`s;
 image passes pull only the needed pages), push `toc.json`s back to Longleaf.
 
+## Future: move to its own domain (voicesofdissent.org)
+
+Goal: serve this at `voicesofdissent.org` on Cloudflare, working like dangerouspress
+(R2 bucket behind a custom domain). Because IIIF manifests, `search-index.json`, and
+the HTML bake in **absolute** URLs, this is NOT just a DNS change — it needs a rebuild
+with the new prefix:
+1. Register `voicesofdissent.org`, add it to Cloudflare (nameservers).
+2. **R2 custom domain:** bind `voicesofdissent.org` (root) to the R2 bucket. Decide the
+   path: cleanest is to serve the archive at the **root** of the new domain (URLs become
+   `voicesofdissent.org/<magazine>/<issue>/...`) rather than under `/progressive-magazines/`.
+3. **Rebuild everything** with `--prefix https://voicesofdissent.org` (no `/progressive-magazines`
+   subpath) so IIIF `@id`s, cover/reader/deep-link URLs, and search records point at the new
+   host. Tiles can be re-uploaded to the new key layout, or keep the bucket and just change
+   the served path — but the baked-in prefix must match whatever the domain serves.
+4. `aws s3 sync` the rebuilt `deploy_all/` to the bucket/prefix the new domain serves.
+5. **Directory-index Transform Rule** (do this on the new domain — the current site lacks it):
+   Cloudflare → Rules → Transform Rules → Rewrite URL: when URI path ends with `/`, rewrite
+   to `{path}index.html`. Makes bare URLs (`voicesofdissent.org/`, `/masses/`) work instead
+   of 404ing.
+6. Optionally 301 the old `pages.dangerouspress.org/progressive-magazines/*` to the new host.
+Note: the build already uses "Voices of Dissent" as the site name, so only the prefix/host
+and the Cloudflare setup change.
+
 ## TODO / follow-ups
+- **Own domain:** voicesofdissent.org on Cloudflare (see "Future" section above).
 - **Serial threading:** link serialized works across issues (Forerunner "Won Over" Ch. I → Ch. II;
   "Humanness" series) so a reader follows a serial through the run. Cross-issue analog of the
   cross-page continuation logic already in `toc.json` (`serial` field is already populated).
