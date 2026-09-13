@@ -113,7 +113,10 @@ def build_issue(issue_dir, out, prefix, force=False):
             c["thumbnail"] = [thumbs[i]]
     (issue_out / "manifest.json").write_text(json.dumps(mdict, indent=2))
     # reader.html = the TIFY page-turner; index.html = the Contents landing page
-    (issue_out / "reader.html").write_text(_TIFY_HTML.replace("__TITLE__", f"{title_of(magazine)} — {disp}"))
+    (issue_out / "reader.html").write_text(
+        _TIFY_HTML.replace("__TITLE__", html.escape(f"{title_of(magazine)} — {disp}"))
+                  .replace("__JOURNAL__", html.escape(title_of(magazine)))
+                  .replace("__DISP__", html.escape(disp)))
     # carry full_text.json so galleries/search have page counts + text
     ft = issue_dir / "full_text.json"
     version = None
@@ -150,13 +153,37 @@ _TIFY_HTML = """<!DOCTYPE html><html lang="en"><head>
 <title>__TITLE__</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tify@0.36.2/dist/tify.css">
 <style>
-  html,body,#tify{margin:0;height:100%}
-  #tify{
+  :root{--header:#2a2622;--hink:#e8e0d4;--hdim:#9a8b74;--accent:#8b7355}
+  @media(prefers-color-scheme:dark){:root{--header:#161310;--hink:#e9e1d4;--hdim:#9c8f7c;--accent:#c2a578}}
+  :root[data-theme=dark]{--header:#161310;--hink:#e9e1d4;--hdim:#9c8f7c;--accent:#c2a578}
+  :root[data-theme=light]{--header:#2a2622;--hink:#e8e0d4;--hdim:#9a8b74;--accent:#8b7355}
+  html,body{margin:0;height:100%}
+  body{display:flex;flex-direction:column}
+  .nav{flex:0 0 auto;background:var(--header);color:var(--hink);display:flex;align-items:center;
+    justify-content:space-between;gap:12px;padding:9px 16px;font-family:system-ui,sans-serif;font-size:13.5px}
+  .crumb{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .crumb a{color:var(--hdim);text-decoration:none}
+  .crumb a:hover{color:var(--hink);text-decoration:underline}
+  .crumb .sep{color:var(--hdim);margin:0 7px}
+  .crumb .cur{color:var(--hink)}
+  .toc-link{flex:0 0 auto;color:#fff;background:var(--accent);text-decoration:none;font-weight:700;
+    letter-spacing:.02em;padding:6px 13px;border-radius:4px;white-space:nowrap}
+  .toc-link:hover{filter:brightness(1.08)}
+  .toc-link:focus-visible{outline:2px solid var(--hink);outline-offset:2px}
+  #tify{flex:1 1 auto;min-height:0;
     --tify-base-color:#8b7355; --tify-bg-color:#faf8f4; --tify-text-color:#2a2622;
     --tify-border-radius:4px; --tify-body-bg:#e8e0d4;
     font-family:Georgia,'Times New Roman',serif;
   }
 </style></head><body>
+<nav class="nav">
+  <div class="crumb">
+    <a href="../../index.html">Progressive Magazines Archive</a><span class="sep">/</span>
+    <a href="../index.html">__JOURNAL__</a><span class="sep">/</span>
+    <span class="cur">__DISP__</span>
+  </div>
+  <a class="toc-link" href="index.html">&#9776;&nbsp; Contents</a>
+</nav>
 <div id="tify"></div>
 <script>
 // Back-compat: older/bookmarked links put the state in the hash (#?tify=...), but
@@ -326,7 +353,7 @@ header{background:var(--header);color:var(--hink);padding:20px 24px 26px}
 .slink a{color:var(--accent);font-weight:600;text-decoration:none}.slink a:hover{text-decoration:underline}
 </style></head><body>
 <header><div class="wrap">
- <div class="crumb"><a href="../index.html">Progressive Magazines Archive</a> / <a href="index.html">__TITLE__</a></div>
+ <div class="crumb"><a href="../../index.html">Progressive Magazines Archive</a> / <a href="../index.html">__TITLE__</a></div>
  <div class="mast">__TITLE__</div>
  <div class="iline">__DISP__</div>
 </div></header><hr class="dbl">
