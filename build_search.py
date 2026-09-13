@@ -20,15 +20,16 @@ def _title(slug):
     return slug.replace("-", " ").replace("_", " ").title()
 
 
-def build(root, title="Voices of Dissent — Search"):
+def build(root, title="Voices of Dissent — Search", titles=None):
     root = Path(root)
+    titles = titles or {}
     magazines = sorted(d for d in root.iterdir()
                        if d.is_dir() and (d / "manifest.json").exists())
 
     records = []
     mags = {}  # slug -> display title
     for mag in magazines:
-        mags[mag.name] = _title(mag.name)
+        mags[mag.name] = titles.get(mag.name) or _title(mag.name)
         for issue in sorted(mag.iterdir()):
             ft = issue / "full_text.json"
             if not (issue.is_dir() and ft.exists()):
@@ -37,6 +38,15 @@ def build(root, title="Voices of Dissent — Search"):
                 data = json.loads(ft.read_text())
             except Exception:
                 continue
+            # printed-folio offset for citation display (0 for per-issue magazines)
+            offset = 0
+            tj = issue / "toc.json"
+            if tj.exists():
+                try:
+                    o = json.loads(tj.read_text()).get("printed_offset")
+                    offset = o if isinstance(o, int) else 0
+                except Exception:
+                    offset = 0
             for pg in data.get("pages", []):
                 text = " ".join(r.get("text", "") for r in pg.get("regions", []))
                 text = _WS.sub(" ", text).strip()
@@ -49,7 +59,8 @@ def build(root, title="Voices of Dissent — Search"):
                 records.append({
                     "m": mag.name,                                   # magazine slug
                     "i": issue.name,                                 # issue slug
-                    "p": p,                                          # page number
+                    "p": p,                                          # scan page (for the link)
+                    "pp": p + offset,                                # printed folio (for display)
                     "u": f"{mag.name}/{issue.name}/reader.html?tify={tify}",  # reader deep link
                     "t": text,                                       # page text
                 })
@@ -100,6 +111,13 @@ const MAX_RESULTS=300;
 
 function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function title(slug){return slug.replace(/[-_]+/g,' ').replace(/\b\w/g,c=>c.toUpperCase());}
+const MO=['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+// Clean date label from an issue slug (…_1911-11-11 / …-1912-03); fall back to slug.
+function issueLabel(slug){
+  const m=slug.match(/(\d{4})-(\d{2})(?:-(\d{2}))?/);
+  if(m){const mo=MO[+m[2]]||m[2]; return m[3]?`${mo} ${+m[3]}, ${m[1]}`:`${mo} ${m[1]}`;}
+  return title(slug);
+}
 
 function snippet(text, terms){
   const lc=text.toLowerCase();
@@ -141,7 +159,7 @@ function run(){
   countEl.textContent=`${hits.length} page${hits.length!==1?'s':''} match${hits.length!==1?'':'es'}`+
     (hits.length>MAX_RESULTS?` (showing first ${MAX_RESULTS})`:'');
   resEl.innerHTML=shown.map(({rec})=>{
-    const src=`${MAGS[rec.m]||title(rec.m)} — ${title(rec.i)}, p.${rec.p}`;
+    const src=`${MAGS[rec.m]||title(rec.m)} — ${issueLabel(rec.i)}, p.${rec.pp||rec.p}`;
     return `<div class="hit"><a href="${rec.u}"><div class="src">${esc(src)}</div>`+
            `<div class="snip">${snippet(rec.t,terms)}</div></a></div>`;
   }).join('') || '<div class="empty">No matches.</div>';

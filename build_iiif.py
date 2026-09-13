@@ -31,7 +31,9 @@ VIPS = shutil.which("vips") or "/opt/homebrew/bin/vips"
 TITLES = {"masses": "The Masses", "woman-rebel": "The Woman Rebel",
           "the-crisis": "The Crisis", "mother-earth": "Mother Earth",
           "the-forerunner": "The Forerunner", "appeal-to-reason": "Appeal to Reason",
-          "womans-journal": "Woman's Journal", "progressive-woman": "Progressive Woman"}
+          "womans-journal": "Woman's Journal", "progressive-woman": "Progressive Woman",
+          "poetry": "Poetry", "freewoman": "The Freewoman",
+          "solidarity": "Solidarity", "industrial-worker": "Industrial Worker"}
 
 
 def title_of(slug):
@@ -65,12 +67,16 @@ def build_issue(issue_dir, out, prefix, force=False):
     # so the reader's text pane follows the article flow, not the raw OCR column-sort.
     # Newspapers omit reading_order (compact schema) -> they keep the OCR order.
     ro_map = {}
+    p_offset = 0  # scan-page -> printed-folio offset (bound volumes); 0 for per-issue mags
     _tj = issue_dir / "toc.json"
     if _tj.exists():
         try:
-            for e in (json.loads(_tj.read_text()).get("reading_order") or []):
+            _td = json.loads(_tj.read_text())
+            for e in (_td.get("reading_order") or []):
                 if isinstance(e, dict) and isinstance(e.get("order"), list):
                     ro_map[e.get("page")] = e["order"]
+            if isinstance(_td.get("printed_offset"), int):
+                p_offset = _td["printed_offset"]
         except Exception:
             ro_map = {}
 
@@ -93,7 +99,7 @@ def build_issue(issue_dir, out, prefix, force=False):
         service_id = f"{id_base}/{pid}"
 
         canvas = manifest.make_canvas(id=f"{prefix}/{magazine}/{issue}/canvas/{n}",
-                                      height=h, width=w, label={"en": [f"Page {n}"]})
+                                      height=h, width=w, label={"en": [f"Page {n + p_offset}"]})
         canvas.add_image(
             image_url=f"{service_id}/full/full/0/default.jpg",
             anno_page_id=f"{prefix}/{magazine}/{issue}/page/{n}/1",
@@ -233,10 +239,12 @@ def _reader_href(start):
     return f"reader.html?tify={q}"
 
 
-def _pg_badge(pages, start):
+def _pg_badge(pages, start, offset=0):
+    # Display the printed folio (scan page + printed_offset) for citation; the
+    # reader link still jumps by scan page. offset=0 for per-issue magazines.
     if not pages:
-        return f'p.&nbsp;<b>{start}</b>'
-    pages = sorted(set(pages))
+        return f'p.&nbsp;<b>{start + offset}</b>'
+    pages = sorted(set(p + offset for p in pages))
     # collapse consecutive pages into runs: [[1,2,3,4,5],[7]] -> ranges
     runs = [[pages[0]]]
     for p in pages[1:]:
@@ -252,7 +260,7 @@ def _pg_badge(pages, start):
     return f'pp.&nbsp;{", ".join(parts)} &#8599;'
 
 
-def _toc_entry(e):
+def _toc_entry(e, offset=0):
     esc = html.escape
     start = e.get("start_page") or (e.get("pages") or [1])[0]
     title = esc(e.get("title", "Untitled"))
@@ -265,12 +273,12 @@ def _toc_entry(e):
         meta.append(f'<span class="kind">{_TYPE_LABEL.get(t, t)}</span>')
     metahtml = " &middot; ".join(meta)
     metahtml = f'<span class="byline-wrap">{metahtml}</span>' if metahtml else ""
-    return (f'<a class="entry" href="{_reader_href(start)}">'
+    return (f'<a class="entry" href="{_reader_href(start)}">'  # link jumps by scan page
             f'<span><span class="title">{title}</span>{metahtml}</span>'
-            f'<span class="pg">{_pg_badge(e.get("pages"), start)}</span></a>')
+            f'<span class="pg">{_pg_badge(e.get("pages"), start, offset)}</span></a>')
 
 
-def _render_contents(toc):
+def _render_contents(toc, offset=0):
     tops = [e for e in toc if not e.get("parent")]
     kids = {}
     for e in toc:
@@ -279,9 +287,9 @@ def _render_contents(toc):
     items = []
     for e in tops:
         sub = kids.get(e.get("title"), [])
-        li = f'<li class="{ "dept" if sub else "" }'.rstrip() + '">' + _toc_entry(e)
+        li = f'<li class="{ "dept" if sub else "" }'.rstrip() + '">' + _toc_entry(e, offset)
         if sub:
-            li += '<ul class="sub">' + "".join(f"<li>{_toc_entry(s)}</li>" for s in sub) + "</ul>"
+            li += '<ul class="sub">' + "".join(f"<li>{_toc_entry(s, offset)}</li>" for s in sub) + "</ul>"
         li += "</li>"
         items.append(li)
     return "\n".join(items)
@@ -303,9 +311,12 @@ def _landing_html(magazine, issue, disp, toc_data, n_pages, version, prefix):
     title = title_of(magazine)
     cover = f"{prefix.rstrip('/')}/{issue}/page_01.jpg" if (prefix and issue) else "page_01.jpg"
     toc = _toc_items(toc_data)
+    offset = (toc_data or {}).get("printed_offset") or 0
+    if not isinstance(offset, int):
+        offset = 0
     n_articles = len(toc) if toc else None
     if toc:
-        contents = f'<ul class="toc">\n{_render_contents(toc)}\n</ul>'
+        contents = f'<ul class="toc">\n{_render_contents(toc, offset)}\n</ul>'
     else:
         contents = ('<p class="pending">Contents for this issue are being prepared. '
                     'Use &ldquo;Read this issue&rdquo; to page through it now.</p>')
@@ -417,7 +428,7 @@ def main(inp, out, prefix, force=False):
                       and any(c.is_dir() and (c / "index.html").exists() for c in d.iterdir())):
         build_index.build(mag, title=title_of(mag.name), image_base=prefix)
     build_archive.build(out, title="Voices of Dissent", image_base=prefix)
-    build_search.build(out, title="Voices of Dissent — Search")
+    build_search.build(out, title="Voices of Dissent — Search", titles=TITLES)
     print(f"Done. {len(issues)} issues, {total_pages} pages -> {out}", flush=True)
 
 
