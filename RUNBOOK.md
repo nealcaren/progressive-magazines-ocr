@@ -221,26 +221,26 @@ image passes pull only the needed pages), push `toc.json`s back to Longleaf.
 
 ## Future: move to its own domain (voicesofdissent.org)
 
-Goal: serve this at `voicesofdissent.org` on Cloudflare, working like dangerouspress
-(R2 bucket behind a custom domain). Because IIIF manifests, `search-index.json`, and
-the HTML bake in **absolute** URLs, this is NOT just a DNS change — it needs a rebuild
-with the new prefix:
-1. Register `voicesofdissent.org`, add it to Cloudflare (nameservers).
-2. **R2 custom domain:** bind `voicesofdissent.org` (root) to the R2 bucket. Decide the
-   path: cleanest is to serve the archive at the **root** of the new domain (URLs become
-   `voicesofdissent.org/<magazine>/<issue>/...`) rather than under `/progressive-magazines/`.
-3. **Rebuild everything** with `--prefix https://voicesofdissent.org` (no `/progressive-magazines`
-   subpath) so IIIF `@id`s, cover/reader/deep-link URLs, and search records point at the new
-   host. Tiles can be re-uploaded to the new key layout, or keep the bucket and just change
-   the served path — but the baked-in prefix must match whatever the domain serves.
-4. `aws s3 sync` the rebuilt `deploy_all/` to the bucket/prefix the new domain serves.
-5. **Directory-index Transform Rule** (do this on the new domain — the current site lacks it):
-   Cloudflare → Rules → Transform Rules → Rewrite URL: when URI path ends with `/`, rewrite
-   to `{path}index.html`. Makes bare URLs (`voicesofdissent.org/`, `/masses/`) work instead
-   of 404ing.
-6. Optionally 301 the old `pages.dangerouspress.org/progressive-magazines/*` to the new host.
+Goal: serve this at `voicesofdissent.org` on Cloudflare, working like dangerouspress —
+which serves via a **Cloudflare Worker** (fetches objects from the R2 bucket, handles
+routing), NOT a plain R2 custom-domain binding. Reuse/adapt the DP Worker. Because IIIF
+manifests, `search-index.json`, and the HTML bake in **absolute** URLs, this is NOT just
+a DNS/Worker change — it needs a rebuild with the new prefix:
+1. Register `voicesofdissent.org`, add to Cloudflare; point a route/Worker at it.
+2. **Worker → R2:** adapt DP's Worker to serve this content (an R2 binding to the bucket).
+   The Worker maps request paths to bucket keys and appends `index.html` for directory
+   requests (so bare URLs like `/` and `/masses/` work — the current setup lacks this and
+   404s on bare paths). Decide the public layout: cleanest is the archive at the **root**
+   of the new domain (`voicesofdissent.org/<magazine>/<issue>/...`).
+3. **Rebuild everything** with `--prefix https://voicesofdissent.org` so IIIF `@id`s,
+   cover/reader/deep-link URLs, and search records point at the new host. The baked-in
+   prefix must match whatever the Worker serves — the Worker can remap the *key path* in
+   the bucket, but the absolute host in the baked URLs must be the new domain.
+4. `aws s3 sync` the rebuilt `deploy_all/` to the bucket/prefix the Worker reads.
+5. Optionally 301 the old `pages.dangerouspress.org/progressive-magazines/*` to the new host.
 Note: the build already uses "Voices of Dissent" as the site name, so only the prefix/host
-and the Cloudflare setup change.
+and the Worker setup change. (Confirm the exact DP Worker config — this describes the model,
+not the specific code.)
 
 ## TODO / follow-ups
 - **Own domain:** voicesofdissent.org on Cloudflare (see "Future" section above).
