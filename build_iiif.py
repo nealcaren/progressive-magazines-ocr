@@ -207,6 +207,7 @@ _TIFY_HTML = """<!DOCTYPE html><html lang="en"><head>
   .crumb{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .crumb a{color:var(--hdim);text-decoration:none}
   .crumb a:hover{color:var(--hink);text-decoration:underline}
+  .crumb a.cur{color:var(--hink)}  /* current issue: bright, but still links to Contents */
   .crumb .sep{color:var(--hdim);margin:0 7px}
   .crumb .cur{color:var(--hink)}
   .toc-link{flex:0 0 auto;color:#fff;background:var(--accent);text-decoration:none;font-weight:700;
@@ -223,7 +224,7 @@ _TIFY_HTML = """<!DOCTYPE html><html lang="en"><head>
   <div class="crumb">
     <a href="../../index.html">Voices of Dissent</a><span class="sep">/</span>
     <a href="../index.html">__JOURNAL__</a><span class="sep">/</span>
-    <span class="cur">__DISP__</span>
+    <a class="cur" href="index.html">__DISP__</a>
   </div>
   <a class="toc-link" href="index.html">&#9776;&nbsp; Contents</a>
 </nav>
