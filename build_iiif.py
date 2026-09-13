@@ -200,7 +200,7 @@ _TIFY_HTML = """<!DOCTYPE html><html lang="en"><head>
 </style></head><body>
 <nav class="nav">
   <div class="crumb">
-    <a href="../../index.html">Progressive Magazines Archive</a><span class="sep">/</span>
+    <a href="../../index.html">Voices of Dissent</a><span class="sep">/</span>
     <a href="../index.html">__JOURNAL__</a><span class="sep">/</span>
     <span class="cur">__DISP__</span>
   </div>
@@ -375,7 +375,7 @@ header{background:var(--header);color:var(--hink);padding:20px 24px 26px}
 .slink a{color:var(--accent);font-weight:600;text-decoration:none}.slink a:hover{text-decoration:underline}
 </style></head><body>
 <header><div class="wrap">
- <div class="crumb"><a href="../../index.html">Progressive Magazines Archive</a> / <a href="../index.html">__TITLE__</a></div>
+ <div class="crumb"><a href="../../index.html">Voices of Dissent</a> / <a href="../index.html">__TITLE__</a></div>
  <div class="mast">__TITLE__</div>
  <div class="iline">__DISP__</div>
 </div></header><hr class="dbl">
@@ -416,8 +416,8 @@ def main(inp, out, prefix, force=False):
                       if d.is_dir() and d.name != "iiif"
                       and any(c.is_dir() and (c / "index.html").exists() for c in d.iterdir())):
         build_index.build(mag, title=title_of(mag.name), image_base=prefix)
-    build_archive.build(out, title="Progressive Magazines — OCR Archive", image_base=prefix)
-    build_search.build(out, title="Progressive Magazines — Search")
+    build_archive.build(out, title="Voices of Dissent", image_base=prefix)
+    build_search.build(out, title="Voices of Dissent — Search")
     print(f"Done. {len(issues)} issues, {total_pages} pages -> {out}", flush=True)
 
 

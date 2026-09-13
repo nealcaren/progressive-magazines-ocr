@@ -7,7 +7,7 @@ reads each issue's full_text.json.
 
 Usage:
     python build_search.py site
-    python build_search.py site --title "Progressive Magazines — Search"
+    python build_search.py site --title "Voices of Dissent — Search"
 """
 
 import json, re, argparse, urllib.parse
@@ -20,7 +20,7 @@ def _title(slug):
     return slug.replace("-", " ").replace("_", " ").title()
 
 
-def build(root, title="Progressive Magazines — Search"):
+def build(root, title="Voices of Dissent — Search"):
     root = Path(root)
     magazines = sorted(d for d in root.iterdir()
                        if d.is_dir() and (d / "manifest.json").exists())
@@ -169,6 +169,6 @@ fetch('search-index.json').then(r=>r.json()).then(d=>{
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Build full-text search index + UI")
     ap.add_argument("root", help="Archive root holding per-magazine gallery subfolders")
-    ap.add_argument("--title", default="Progressive Magazines — Search")
+    ap.add_argument("--title", default="Voices of Dissent — Search")
     args = ap.parse_args()
     build(args.root, args.title)

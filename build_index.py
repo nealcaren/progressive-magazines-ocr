@@ -215,7 +215,7 @@ fetch('manifest.json')
 """
 
 
-def build(output_dir, title="Progressive Magazines — OCR Review", image_base=""):
+def build(output_dir, title="Voices of Dissent", image_base=""):
     """image_base: if set (e.g. an R2 URL), gallery thumbnails load from
     {image_base}/{issue}/page_01.jpg instead of the local {issue}/images/."""
     output_dir = Path(output_dir)
@@ -249,6 +249,6 @@ def build(output_dir, title="Progressive Magazines — OCR Review", image_base="
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build top-level gallery + manifest")
     parser.add_argument("output_dir", help="Review site directory (holds issue subfolders)")
-    parser.add_argument("--title", default="Progressive Magazines — OCR Review")
+    parser.add_argument("--title", default="Voices of Dissent")
     args = parser.parse_args()
     build(args.output_dir, args.title)

@@ -6,7 +6,7 @@ Scans <root> for subdirectories that contain a manifest.json (i.e. per-magazine
 galleries) and writes <root>/index.html.
 
 Usage:
-    python build_archive.py site --title "Progressive Magazines — OCR Archive"
+    python build_archive.py site --title "Voices of Dissent"
     python build_archive.py site --image-base https://pages.dangerouspress.org/progressive-magazines
 """
 
@@ -26,7 +26,7 @@ def _magazine_meta(mag_dir):
     return len(issues), total_pages, first
 
 
-def build(root, title="Progressive Magazines — OCR Archive", image_base=""):
+def build(root, title="Voices of Dissent", image_base=""):
     root = Path(root)
     image_base = image_base.rstrip("/")
     mags = sorted(d for d in root.iterdir()
@@ -80,7 +80,7 @@ header p{{font-size:14px;color:#9a8b74;margin-top:4px;font-family:sans-serif}}
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Build combined-archive master landing page")
     ap.add_argument("root", help="Archive root holding per-magazine gallery subfolders")
-    ap.add_argument("--title", default="Progressive Magazines — OCR Archive")
+    ap.add_argument("--title", default="Voices of Dissent")
     ap.add_argument("--image-base", default="", help="R2 base for thumbnails (optional)")
     args = ap.parse_args()
     build(args.root, args.title, args.image_base)
