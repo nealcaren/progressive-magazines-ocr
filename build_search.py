@@ -87,7 +87,7 @@ header a{color:#c9b896;font-size:13px;font-family:sans-serif;text-decoration:non
 </style></head><body>
 <header><h1>__TITLE__</h1> &nbsp; <a href="index.html">&larr; Archive</a></header>
 <div class="controls">
-  <input type="search" id="q" placeholder="Search the full text of every page…" autofocus>
+  <input type="search" id="q" placeholder='Search full text — use "quotes" for an exact phrase' autofocus>
   <select id="pub"><option value="">All publications</option></select>
 </div>
 <div class="count" id="count"></div>
@@ -114,10 +114,18 @@ function snippet(text, terms){
   return s;
 }
 
+// Parse a query into AND terms. "quoted text" is one literal phrase (kept with its
+// spaces so the substring matcher requires it contiguously); bare words are separate.
+function parseTerms(raw){
+  const terms=[];
+  const rest=raw.replace(/"([^"]*)"/g,(m,p)=>{const t=p.trim().toLowerCase();if(t)terms.push(t);return ' ';});
+  for(const w of rest.toLowerCase().split(/\s+/))if(w)terms.push(w);
+  return terms;
+}
+
 function run(){
-  const raw=qEl.value.trim().toLowerCase();
   const pub=pubEl.value;
-  const terms=raw.split(/\s+/).filter(Boolean);
+  const terms=parseTerms(qEl.value.trim());
   if(!terms.length){resEl.innerHTML='';countEl.textContent='';return;}
   const hits=[];
   for(let k=0;k<PAGES.length;k++){
