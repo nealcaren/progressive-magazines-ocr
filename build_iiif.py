@@ -166,14 +166,29 @@ def build_issue(issue_dir, out, prefix, force=False):
             toc_data = None
     (issue_out / "index.html").write_text(
         _landing_html(magazine, issue, disp, toc_data, len(page_jsons), version, prefix))
-    # flat cover JPEG at out/<issue>/page_01.jpg — gallery + archive thumbnails
-    # load from {prefix}/{issue}/page_01.jpg (the tiled viewer uses IIIF instead)
+    # flat cover at out/<issue>/page_01.jpg + a small cover.jpg thumbnail (~500px).
+    # Galleries/homepage load cover.jpg (full page scans are 1-3 MB and paint slowly);
+    # the tiled viewer uses IIIF instead.
     cover = issue_dir / "images" / "page_01.jpg"
     if cover.exists():
         cover_out = out / issue
         cover_out.mkdir(parents=True, exist_ok=True)
         shutil.copy(cover, cover_out / "page_01.jpg")
+        _cover_thumb(cover, cover_out / "cover.jpg")
     return len(page_jsons)
+
+
+def _cover_thumb(src, dst, width=500):
+    """Downscaled cover for gallery cards. Falls back to copying if PIL is absent."""
+    try:
+        from PIL import Image
+        Image.MAX_IMAGE_PIXELS = None
+        im = Image.open(src).convert("RGB")
+        if im.width > width:
+            im = im.resize((width, round(im.height * width / im.width)), Image.LANCZOS)
+        im.save(dst, "JPEG", quality=82)
+    except Exception:
+        shutil.copy(src, dst)
 
 
 _TIFY_HTML = """<!DOCTYPE html><html lang="en"><head>

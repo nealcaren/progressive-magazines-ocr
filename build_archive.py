@@ -37,7 +37,8 @@ def build(root, title="Voices of Dissent", image_base=""):
         n_issues, n_pages, first = _magazine_meta(d)
         display = d.name.replace("-", " ").replace("_", " ").title()
         if first:
-            thumb = (f"{image_base}/{first}/page_01.jpg" if image_base
+            # small cover thumbnail (~500px); full page scans are 1-3 MB and paint slowly
+            thumb = (f"{image_base}/{first}/cover.jpg" if image_base
                      else f"{d.name}/{first}/images/page_01.jpg")
         else:
             thumb = ""

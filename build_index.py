@@ -120,8 +120,7 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 <body>
 <header>
   <h1>__TITLE__</h1>
-  <p>Layout detection + GLM-OCR
-  &middot; <a href="../index.html" style="color:#c9b896">Archive</a>
+  <p><a href="../index.html" style="color:#c9b896">&larr; Voices of Dissent</a>
   &middot; <a href="../search.html?pub=__PUB__" style="color:#e8d9a8;font-weight:600">Search this publication &rarr;</a></p>
 </header>
 <div class="controls">
@@ -144,7 +143,8 @@ function displayTitle(name) {
 }
 function issueLabel(issue) { return issue.label || displayTitle(issue.name); }
 function thumbUrl(name) {
-  return IMG_BASE ? `${IMG_BASE}/${name}/page_01.jpg` : `${name}/images/page_01.jpg`;
+  // small cover thumbnail (~500px) so galleries stay light; full page scans are 1-3 MB
+  return IMG_BASE ? `${IMG_BASE}/${name}/cover.jpg` : `${name}/images/page_01.jpg`;
 }
 
 function renderGrid(filtered) {
@@ -154,18 +154,12 @@ function renderGrid(filtered) {
     return;
   }
   grid.innerHTML = filtered.map(issue => {
-    const hasVersion = !!issue.version;
-    const cardClass = hasVersion ? 'issue-card' : 'issue-card stale';
-    const badge = hasVersion
-      ? `<div class="pipeline-badge current">OCR v${issue.version}</div>`
-      : `<div class="pipeline-badge old">Needs reprocessing</div>`;
-    return `<div class="${cardClass}">
+    return `<div class="issue-card">
       <a href="${issue.name}/index.html">
         <div class="thumb"><img src="${thumbUrl(issue.name)}" loading="lazy" alt="${issueLabel(issue)}"></div>
         <div class="info">
           <div class="title">${issueLabel(issue)}</div>
           <div class="meta">${issue.pages} pages</div>
-          ${badge}
         </div>
       </a>
     </div>`;
