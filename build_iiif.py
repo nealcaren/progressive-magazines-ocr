@@ -101,7 +101,16 @@ def build_issue(issue_dir, out, prefix, force=False):
             format="image/jpeg", height=h, width=w,
             service=[{"@id": service_id, "@type": "ImageService2",
                       "profile": "http://iiif.io/api/image/2/level0.json"}])
-        for i, r in enumerate(d["regions"]):
+        regions = d["regions"]
+        order = ro_map.get(n)
+        if order:  # LLM reading order first, then any regions it didn't mention
+            seq = [i for i in order if isinstance(i, int) and 0 <= i < len(regions)]
+            seen = set(seq)
+            seq += [i for i in range(len(regions)) if i not in seen]
+        else:
+            seq = range(len(regions))
+        for i in seq:
+            r = regions[i]
             txt = r.get("text", "").strip()
             if not txt:
                 continue
