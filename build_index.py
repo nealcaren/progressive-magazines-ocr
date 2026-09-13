@@ -93,6 +93,10 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   .controls { max-width: 1200px; margin: 0 auto; padding: 16px 24px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .controls input[type="search"] { flex: 1; min-width: 200px; padding: 8px 14px; border: 1px solid #c9b896; border-radius: 6px; background: #fff; font-size: 14px; font-family: sans-serif; outline: none; }
   .controls input:focus { border-color: #8b7355; box-shadow: 0 0 0 2px rgba(139,115,85,0.2); }
+  .controls .pub-search { flex: 1; min-width: 240px; display: flex; gap: 8px; }
+  .controls .pub-search input[type="search"] { flex: 1; min-width: 0; }
+  .controls .pub-search button { padding: 8px 16px; border: 0; border-radius: 6px; background: #8b7355; color: #fff; font-family: sans-serif; font-weight: 700; font-size: 14px; cursor: pointer; }
+  .controls .pub-search button:hover { filter: brightness(1.08); }
   .controls .sort-btn { padding: 7px 14px; border: 1px solid #c9b896; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; font-family: sans-serif; color: #2a2622; }
   .controls .sort-btn:hover { background: #f0ece4; }
   .controls .sort-btn.active { background: #2a2622; color: #e8e0d4; border-color: #2a2622; }
@@ -124,7 +128,11 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   &middot; <a href="../search.html?pub=__PUB__" style="color:#e8d9a8;font-weight:600">Search this publication &rarr;</a></p>
 </header>
 <div class="controls">
-  <input type="search" id="search" placeholder="Filter by issue name...">
+  <form class="pub-search" action="../search.html" method="get" role="search">
+    <input type="hidden" name="pub" value="__PUB__">
+    <input type="search" name="q" placeholder='Search this publication — use "quotes" for a phrase' aria-label="Search this publication">
+    <button type="submit">Search</button>
+  </form>
   <button class="sort-btn active" data-sort="date">By date</button>
   <button class="sort-btn" data-sort="name">A-Z</button>
   <button class="sort-btn" data-sort="pages">By pages</button>
@@ -164,9 +172,7 @@ function renderGrid(filtered) {
       </a>
     </div>`;
   }).join('');
-  const current = filtered.filter(i => i.version).length;
-  document.getElementById('count').textContent =
-    `${filtered.length} issues — ${current} current, ${filtered.length - current} unprocessed`;
+  document.getElementById('count').textContent = `${filtered.length} issues`;
 }
 
 function sortIssues(list, mode) {
@@ -179,14 +185,9 @@ function sortIssues(list, mode) {
 }
 
 function update() {
-  const query = document.getElementById('search').value.toLowerCase();
-  let filtered = issues;
-  if (query) filtered = issues.filter(i =>
-    i.name.toLowerCase().includes(query) || issueLabel(i).toLowerCase().includes(query));
-  renderGrid(sortIssues(filtered, currentSort));
+  renderGrid(sortIssues(issues, currentSort));
 }
 
-document.getElementById('search').addEventListener('input', update);
 document.querySelectorAll('.sort-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
