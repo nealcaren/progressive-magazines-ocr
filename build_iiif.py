@@ -158,6 +158,12 @@ _TIFY_HTML = """<!DOCTYPE html><html lang="en"><head>
   }
 </style></head><body>
 <div id="tify"></div>
+<script>
+// Back-compat: older/bookmarked links put the state in the hash (#?tify=...), but
+// TIFY reads location.search only. Rewrite hash->query (no reload) before TIFY inits.
+(function(){var h=location.hash;if(h.indexOf('#?')===0&&!location.search){
+  try{history.replaceState(null,'',location.pathname+h.slice(1));}catch(e){}}})();
+</script>
 <script type="module">
 import Tify from 'https://cdn.jsdelivr.net/npm/tify@0.36.2/dist/tify.js'
 new Tify({container:'#tify', manifestUrl:'manifest.json', language:'en', urlQueryKey:'tify'})
