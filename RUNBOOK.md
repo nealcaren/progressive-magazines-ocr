@@ -42,6 +42,22 @@ nohup-able. They write into `pdfs/<magazine>/`.
 
 **zsh gotcha:** unquoted `$var` does NOT word-split in zsh — use `while read` loops or `${=var}`.
 
+⚠️ **IA "Text PDF" is a bad derivative for some serials — use the JP2 zip instead.**
+IA's downloadable `<id>.pdf` was washed-out for Poetry & Woman's Journal (two
+same-size grayscale layers per page — extracting one layer gave a faded image AND
+degraded OCR) and for Mother Earth (faded across all layers). IA's **"Single Page
+Processed JP2 ZIP"** is the crisp derivative the online viewer shows. Fix:
+- Detect the layered-PDF signature first: `python detect_layered_pdfs.py pdfs` (flags
+  titles whose pages have ≥2 same-size embedded images). Also just *look* at a page.
+- Rebuild those titles from JP2: `python sources/fetch_ia_jp2.py <title> [years...]`
+  (downloads each issue's `_jp2.zip`, decodes JP2→JPEG via PIL, assembles a clean
+  one-image-per-page PDF, same filenames). `RESUME=1` skips already-fetched issues.
+  Handles sim_ items (Poetry, Woman's Journal) and the Mother Earth bound-volume item.
+- Then re-OCR those titles (§3) and **`--force` re-tile** them at publish (§4) — the
+  new images differ, so stale tiles must be regenerated.
+`extract_page_image` now auto-renders layered pages (composites both layers), but the
+JP2 zip is the pristine source and the right fix when a title looks faded.
+
 ## 2. Stage — naming convention (drives sorting + labels)
 
 Name issue PDFs `<magazine>_<YYYY-MM-DD>.pdf` (weeklies) or `<magazine>_<YYYY-MM>.pdf`
@@ -62,7 +78,17 @@ sbatch longleaf/run_ocr_array.sl          # array over ALL pdfs/*/; skip-existin
 - **Sideways scans:** re-OCR that title with `--rotate {90|180|270}` (clockwise). See `run_fix.sl` for the per-magazine rotation pattern (Industrial Worker = 90 CW, Appeal to Reason = 270 CCW — they were scanned opposite ways). Check orientation first: page dims where width > height = landscape = rotated.
 - **Google-scan multi-image pages:** `ocr_newspapers.py` picks the LARGEST embedded image (not image[0]) — Google PDFs embed a tiny "Digitized by Google" strip as image[0].
 - ⚠️ **Any time you rotate or re-extract page images, you must `--force` re-tile that title at publish (§4)** — the incremental build otherwise keeps the old tiles and the site shows the wrong image.
+- Re-OCR just some titles: `sbatch longleaf/run_ocr_ia.sl` (edit the title list). **Clear
+  their `site/<title>` dirs first** (the array skips issues that already have output).
+- **Blank OCR-refusal regions before publishing.** GLM sometimes returns a refusal
+  ("The image is too blurry…", "cannot recognize…") for an individual hard region.
+  Left in, it pollutes search results and the text pane. After OCR, empty any region
+  whose short text matches those phrases (set `text=""`, `status="illegible"`) in both
+  `page_*.json` and `full_text.json`. On the 2026 re-do this was ~53 regions across 47
+  issues (0.02% of content) — negligible after the JP2 fix, but worth blanking.
 - Smoke-test one shard interactively (`srun --pty`) before the array. GPU ≈ 28s/page.
+  Sanity-check text quality afterward (grep full_text for refusal phrases; confirm
+  real content, not a whole-issue refusal).
 
 ## 4. Publish — to R2
 
@@ -165,6 +191,28 @@ model suffix `:batch`, poll `GET /api/beta/batches/:id`, results inline `{custom
   authors from end-of-piece signatures (Crisis Jan 1911: printed 12 entries → 40, added Du Bois etc.).
 
 **Cost (Gemini 3.8 flash):** ~$0.03 small mag · ~$0.07 large/dense · **whole corpus ≈ $15–16** (newspapers batched at half). One-time per title unless OCR changes.
+
+## Site features the builders produce (2026)
+Reused as-is for any new publication — all live and student-tested:
+- **TIFY reader** deep-links via the QUERY string: `reader.html?tify={"pages":[N]}` +
+  `urlQueryKey:'tify'` in the init (TIFY reads `location.search` only; a `#?tify=` hash
+  is ignored). reader.html also has a hash→query shim for legacy links, a breadcrumb
+  (Archive / Journal / Issue) + a Contents button.
+- **Full-text search** (`build_search.py`): result links deep-link into the reader (NOT
+  the defunct `page_NN.html`); `"quoted phrases"` do exact-phrase matching; results
+  show clean date labels + printed folios.
+- **Printed folios for citation:** the TOC, reader page labels, and search results show
+  the printed page (`scan page + toc.json printed_offset`); deep-links still jump by
+  scan page. Per-issue magazines have offset 0; bound volumes (e.g. Freewoman) get the
+  real folio (scan p.6 → p.306). `analyze_issue` derives `printed_offset` from folios.
+- **LLM reading order in the reader:** `build_iiif` reorders each page's text
+  annotations by `toc.json` reading_order (magazines; newspapers omit it and keep OCR
+  order). Annotation ids keep the original region index so deep links stay stable.
+- **Cover thumbnails:** galleries/homepage load a ~500px `cover.jpg` (build_iiif writes
+  it next to `page_01.jpg`), not the 1-3 MB full page scan — heavy covers were failing
+  to paint. Regenerate for an existing deploy by downscaling each `deploy_all/*/page_01.jpg`.
+- **Homepage** has a search box + a student-facing subtitle (no OCR jargon); galleries
+  dropped the dev-facing pipeline/version badges. Site name: **"Voices of Dissent"**.
 
 ## Cost / provider keys
 Keys live in the Mac shell env (OPENROUTER_API_KEY etc.) — keep them OFF the shared HPC.
