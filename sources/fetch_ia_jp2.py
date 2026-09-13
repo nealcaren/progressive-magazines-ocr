@@ -56,11 +56,24 @@ def jp2zip_to_pdf(zip_path, pdf_path):
     return len(names)
 
 
+def _search(api):
+    """IA advancedsearch with a couple retries — a single flaky response must not
+    abort the whole title (that left Woman's Journal at 99/154 once)."""
+    last = None
+    for _ in range(3):
+        try:
+            return json.loads(get(api))["response"]["docs"]
+        except Exception as e:
+            last = e
+    print(f"  WARN search failed: {api[:80]}... ({last})", flush=True)
+    return []
+
+
 def issues_womans_journal(years):
     for y in years:
         api = (f"https://archive.org/advancedsearch.php?q=identifier:sim_the-womans-journal_{y}*"
                "&fl[]=identifier&rows=400&output=json")
-        for doc in json.loads(get(api))["response"]["docs"]:
+        for doc in _search(api):
             iid = doc["identifier"]
             m = re.search(r"(\d{4}-\d{2}-\d{2})", iid)
             if m:
@@ -71,7 +84,7 @@ def issues_poetry(years):
     for y in years:
         api = (f"https://archive.org/advancedsearch.php?q=identifier:sim_poetry_{y}*"
                "&fl[]=identifier&rows=400&output=json")
-        for doc in json.loads(get(api))["response"]["docs"]:
+        for doc in _search(api):
             iid = doc["identifier"]
             m = re.search(r"(\d{4}-\d{2})", iid)
             if m:
@@ -104,9 +117,13 @@ def main():
     years = sys.argv[2:]  # optional filter (mother-earth uses default range if given)
     out_dir = f"{REPO}/pdfs/{title}"
     os.makedirs(out_dir, exist_ok=True)
-    n_ok = n_fail = 0
+    resume = os.environ.get("RESUME") == "1"
+    n_ok = n_fail = n_skip = 0
     for iid, zipname, pdfname in DISPATCH[title](years):
         pdf_out = os.path.join(out_dir, pdfname)
+        if resume and os.path.exists(pdf_out) and os.path.getsize(pdf_out) > 100_000:
+            n_skip += 1
+            continue
         try:
             with tempfile.NamedTemporaryFile(suffix="_jp2.zip", delete=False) as tf:
                 zpath = tf.name
@@ -118,7 +135,7 @@ def main():
         except Exception as e:
             print(f"FAIL {pdfname}: {e}", flush=True)
             n_fail += 1
-    print(f"DONE {title}: {n_ok} ok, {n_fail} failed", flush=True)
+    print(f"DONE {title}: {n_ok} ok, {n_fail} failed, {n_skip} skipped", flush=True)
 
 
 if __name__ == "__main__":
