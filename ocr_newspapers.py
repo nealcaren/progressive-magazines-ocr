@@ -446,26 +446,41 @@ def _page_coverage(bboxes, w, h):
 def extract_page_image(doc, page_idx, output_path, rotate=0):
     """Save the page's main scan. rotate = clockwise degrees (0/90/180/270) to
     upright sideways scans. Picks the LARGEST embedded image, not images[0] —
-    Google-scanned PDFs put a small 'Digitized by Google' strip first."""
+    Google-scanned PDFs put a small 'Digitized by Google' strip first.
+
+    Exception: some IA 'sim_*' PDFs (Poetry, Woman's Journal) embed TWO same-size
+    grayscale layers per page — a faded background + the actual text layer — that
+    the viewer composites. Extracting a single layer yields a washed-out image
+    (and bad OCR), so when the largest size is shared by 2+ images we RENDER the
+    page (get_pixmap) to composite them, at a DPI matching the source resolution."""
     page = doc[page_idx]
     images = page.get_images()
-    if images:
-        best_xref, best_area = images[0][0], -1
-        for im in images:
-            xref = im[0]
-            try:
-                info = doc.extract_image(xref)
-                area = info.get("width", 0) * info.get("height", 0)
-            except Exception:
-                area = 0
-            if area > best_area:
-                best_area, best_xref = area, xref
+    dims = []  # (area, xref, width)
+    for im in images:
+        xref = im[0]
+        try:
+            info = doc.extract_image(xref)
+            w, h = info.get("width", 0), info.get("height", 0)
+        except Exception:
+            w = h = 0
+        dims.append((w * h, xref, w))
+    max_area = max((d[0] for d in dims), default=0)
+    layered = max_area > 0 and sum(1 for d in dims if d[0] == max_area) > 1
+    if images and not layered:
+        best_xref = max(dims)[1]
         pix = fitz.Pixmap(doc, best_xref)
         if pix.n > 4: pix = fitz.Pixmap(fitz.csRGB, pix)
         pix.save(str(output_path))
         pix = None
     else:
-        pix = page.get_pixmap(dpi=300)
+        # layered page (composite via render) OR no embedded image at all.
+        # Match source resolution so we don't lose detail (cap 400 dpi).
+        if max_area:
+            best_w = max(dims)[2]
+            dpi = min(400, max(300, round(best_w / (page.rect.width / 72))))
+        else:
+            dpi = 300
+        pix = page.get_pixmap(dpi=dpi)
         pix.save(str(output_path))
         pix = None
     if rotate % 360:
