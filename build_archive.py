@@ -54,9 +54,17 @@ def build(root, title="Voices of Dissent", image_base=""):
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{font-family:Georgia,'Times New Roman',serif;background:#f4f1eb;color:#2a2a2a}}
-header{{background:#2a2622;color:#e8e0d4;padding:22px 24px;border-bottom:3px solid #8b7355}}
+header{{background:#2a2622;color:#e8e0d4;padding:26px 24px;border-bottom:3px solid #8b7355}}
+.hwrap{{max-width:1200px;margin:0 auto}}
 header h1{{font-size:30px;font-weight:800;letter-spacing:.5px}}
 header p{{font-size:14px;color:#9a8b74;margin-top:4px;font-family:sans-serif}}
+.search{{display:flex;gap:10px;margin-top:16px;max-width:640px}}
+.search input{{flex:1;min-width:0;padding:11px 14px;border:1px solid #8b7355;border-radius:6px;
+  font-size:15px;font-family:sans-serif;background:#faf8f4;color:#2a2a2a;outline:none}}
+.search input:focus{{border-color:#c2a578;box-shadow:0 0 0 3px rgba(194,165,120,.3)}}
+.search button{{padding:11px 20px;border:0;border-radius:6px;background:#8b7355;color:#fff;
+  font-family:sans-serif;font-weight:700;font-size:15px;cursor:pointer}}
+.search button:hover{{filter:brightness(1.08)}}
 .container{{max-width:1200px;margin:0 auto;padding:32px 24px}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:22px}}
 .mag-card{{background:#fff;border:1px solid #d4cabb;border-radius:8px;overflow:hidden;transition:box-shadow .2s,transform .2s}}
@@ -68,9 +76,12 @@ header p{{font-size:14px;color:#9a8b74;margin-top:4px;font-family:sans-serif}}
 .mag-card .title{{font-size:19px;font-weight:800}}
 .mag-card .meta{{font-size:12px;color:#8a7d6d;margin-top:4px;font-family:sans-serif}}
 </style></head><body>
-<header><h1>{html.escape(title)}</h1>
-<p>Layout detection + GLM-OCR &middot; {len(mags)} magazines &middot; {total_issues} issues
-&middot; <a href="search.html" style="color:#e8d9a8;font-weight:600">Search full text &rarr;</a></p></header>
+<header><div class="hwrap"><h1>{html.escape(title)}</h1>
+<p>Radical and reform magazines of the American 1910s &middot; {len(mags)} titles &middot; {total_issues} issues</p>
+<form class="search" action="search.html" method="get" role="search">
+  <input type="search" name="q" placeholder='Search the full text — try "general strike"' aria-label="Search the full text">
+  <button type="submit">Search</button>
+</form></div></header>
 <div class="container"><div class="grid">{chr(10).join(cards)}</div></div>
 </body></html>'''
     (root / "index.html").write_text(page)
