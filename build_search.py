@@ -10,7 +10,7 @@ Usage:
     python build_search.py site --title "Progressive Magazines — Search"
 """
 
-import json, re, argparse
+import json, re, argparse, urllib.parse
 from pathlib import Path
 
 _WS = re.compile(r"\s+")
@@ -43,11 +43,14 @@ def build(root, title="Progressive Magazines — Search"):
                 if not text:
                     continue
                 p = pg.get("page")
+                # deep-link into the TIFY reader at this page (page_NN.html doesn't
+                # exist on this site — that was the old per-page-HTML viewer scheme).
+                tify = urllib.parse.quote(json.dumps({"pages": [p]}, separators=(",", ":")))
                 records.append({
                     "m": mag.name,                                   # magazine slug
                     "i": issue.name,                                 # issue slug
                     "p": p,                                          # page number
-                    "u": f"{mag.name}/{issue.name}/page_{p:02d}.html",  # link
+                    "u": f"{mag.name}/{issue.name}/reader.html?tify={tify}",  # reader deep link
                     "t": text,                                       # page text
                 })
 

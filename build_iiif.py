@@ -61,6 +61,19 @@ def build_issue(issue_dir, out, prefix, force=False):
     tiles_root = out / "iiif"
     id_base = f"{prefix}/iiif"
 
+    # LLM-corrected reading order (magazines): reorder each page's text annotations
+    # so the reader's text pane follows the article flow, not the raw OCR column-sort.
+    # Newspapers omit reading_order (compact schema) -> they keep the OCR order.
+    ro_map = {}
+    _tj = issue_dir / "toc.json"
+    if _tj.exists():
+        try:
+            for e in (json.loads(_tj.read_text()).get("reading_order") or []):
+                if isinstance(e, dict) and isinstance(e.get("order"), list):
+                    ro_map[e.get("page")] = e["order"]
+        except Exception:
+            ro_map = {}
+
     config.configs['helpers.auto_fields.AutoLang'].auto_lang = "en"
     man_id = f"{prefix}/{magazine}/{issue}/manifest.json"
     _, lab = build_index.issue_date(magazine, issue)
