@@ -34,18 +34,18 @@ cd $REPO
 
 # magazine : clockwise-rotation degrees
 run() {
-  local mag=$1 rot=$2
-  echo "=== $mag (rotate $rot, shard $SLURM_ARRAY_TASK_ID/$SLURM_ARRAY_TASK_COUNT) ==="
+  local mag=$1 rot=$2 extra=$3
+  echo "=== $mag (rotate $rot $extra, shard $SLURM_ARRAY_TASK_ID/$SLURM_ARRAY_TASK_COUNT) ==="
   python ocr_newspapers.py \
     --input-dir "pdfs/$mag" --output-dir "site/$mag" \
-    --rotate "$rot" \
+    --rotate "$rot" $extra \
     --shard "$SLURM_ARRAY_TASK_ID/$SLURM_ARRAY_TASK_COUNT"
 }
 
 run the-crisis 0
 run progressive-woman 0
-run industrial-worker 0
-run appeal-to-reason 0
+run industrial-worker 0 --per-page-rotate
+run appeal-to-reason 0 --per-page-rotate
 run mother-earth 0
 
 echo "Done at $(date)"

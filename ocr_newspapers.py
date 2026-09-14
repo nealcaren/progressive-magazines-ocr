@@ -443,7 +443,7 @@ def _page_coverage(bboxes, w, h):
     return area / float(w * h)
 
 # ─── PDF extraction ───
-def extract_page_image(doc, page_idx, output_path, rotate=0):
+def extract_page_image(doc, page_idx, output_path, rotate=0, per_page_rot=False):
     """Save the page's main scan. rotate = clockwise degrees (0/90/180/270) to
     upright sideways scans. Picks the LARGEST embedded image, not images[0] —
     Google-scanned PDFs put a small 'Digitized by Google' strip first.
@@ -462,11 +462,13 @@ def extract_page_image(doc, page_idx, output_path, rotate=0):
     placement and at its native resolution, so the composite is preserved and the
     output keeps the base image's dimensions."""
     page = doc[page_idx]
-    # Intrinsic display rotation of the PDF page (clockwise degrees). get_pixmap
-    # honors it; a raw fitz.Pixmap(xref) extract does NOT, so we re-apply it below
-    # for that path. Some titles (e.g. Industrial Worker) alternate 90/270 per
-    # page, which a single --rotate value can't fix — this handles each page.
-    page_rot = page.rotation
+    # Intrinsic display rotation of the PDF page (clockwise degrees). Only applied
+    # when per_page_rot is set (opt-in per title), because the flag is authoritative
+    # for sideways-scanned titles (e.g. Industrial Worker, whose pages alternate
+    # 90/270 and can't be fixed by a single --rotate) but spurious for titles with
+    # legitimately-landscape pages (e.g. some Masses ad pages carry a 270 flag yet
+    # are printed landscape on purpose — honoring it would wrongly rotate them).
+    page_rot = page.rotation if per_page_rot else 0
     extra_rot = 0
     images = page.get_images()
     dims = []  # (area, xref, width, height)
@@ -579,7 +581,7 @@ def generate_index(output_dir, issue_name, page_summaries):
     (output_dir / "index.html").write_text(idx)
 
 # ─── Process one PDF ───
-def process_one_pdf(pdf_path, output_dir, layout_model, rotate=0):
+def process_one_pdf(pdf_path, output_dir, layout_model, rotate=0, per_page_rot=False):
     issue_name = pdf_path.stem
     output_dir.mkdir(parents=True, exist_ok=True)
     images_dir = output_dir / "images"; images_dir.mkdir(exist_ok=True)
@@ -593,7 +595,8 @@ def process_one_pdf(pdf_path, output_dir, layout_model, rotate=0):
         t0 = time.time()
         img_fn = f"page_{page_num:02d}.jpg"
         img_path = images_dir / img_fn
-        img_w, img_h = extract_page_image(doc, page_idx, img_path, rotate=rotate)
+        img_w, img_h = extract_page_image(doc, page_idx, img_path, rotate=rotate,
+                                          per_page_rot=per_page_rot)
         full_image = Image.open(img_path).convert("RGB")
         for result in layout_model.predict(str(img_path)):
             boxes_raw = result["boxes"]
@@ -722,6 +725,11 @@ if __name__ == "__main__":
                              "or auto (mlx on macOS, transformers elsewhere)")
     parser.add_argument("--no-cover-ocr", action="store_true",
                         help="Disable whole-page OCR fallback on sparse/illustrated pages")
+    parser.add_argument("--per-page-rotate", action="store_true",
+                        help="Honor each PDF page's intrinsic rotation flag (for sideways-"
+                             "scanned titles whose pages alternate, e.g. Industrial Worker). "
+                             "Additive with --rotate. Leave off for titles with legitimately-"
+                             "landscape pages.")
     parser.add_argument("--shard", default=None, metavar="I/N",
                         help="Process only PDFs where index %% N == I (for SLURM array jobs, "
                              "e.g. --shard $SLURM_ARRAY_TASK_ID/$SLURM_ARRAY_TASK_COUNT)")
@@ -791,7 +799,8 @@ if __name__ == "__main__":
             continue
 
         print(f"{'='*60}\n[{i+1}/{len(pdf_files)}] {issue_name}", flush=True)
-        summaries = process_one_pdf(pdf_path, issue_out, layout_model, rotate=args.rotate)
+        summaries = process_one_pdf(pdf_path, issue_out, layout_model, rotate=args.rotate,
+                                    per_page_rot=args.per_page_rotate)
         total = sum(s["time"] for s in summaries)
         print(f"  Done: {len(summaries)} pages in {total:.0f}s", flush=True)
 
