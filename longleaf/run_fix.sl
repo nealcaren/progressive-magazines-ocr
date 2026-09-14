@@ -44,8 +44,8 @@ run() {
 
 run the-crisis 0
 run progressive-woman 0
-run industrial-worker 90
-run appeal-to-reason 270
+run industrial-worker 0
+run appeal-to-reason 0
 run mother-earth 0
 
 echo "Done at $(date)"

@@ -462,6 +462,12 @@ def extract_page_image(doc, page_idx, output_path, rotate=0):
     placement and at its native resolution, so the composite is preserved and the
     output keeps the base image's dimensions."""
     page = doc[page_idx]
+    # Intrinsic display rotation of the PDF page (clockwise degrees). get_pixmap
+    # honors it; a raw fitz.Pixmap(xref) extract does NOT, so we re-apply it below
+    # for that path. Some titles (e.g. Industrial Worker) alternate 90/270 per
+    # page, which a single --rotate value can't fix — this handles each page.
+    page_rot = page.rotation
+    extra_rot = 0
     images = page.get_images()
     dims = []  # (area, xref, width, height)
     for im in images:
@@ -492,6 +498,7 @@ def extract_page_image(doc, page_idx, output_path, rotate=0):
         if pix.n > 4: pix = fitz.Pixmap(fitz.csRGB, pix)
         pix.save(str(output_path))
         pix = None
+        extra_rot = page_rot   # raw extract ignores the page's own rotation
     elif composite:
         # Render the base scan's region so overlays composite in; resize to the
         # base image's native dims so tiles stay drop-in with prior extractions.
@@ -515,9 +522,10 @@ def extract_page_image(doc, page_idx, output_path, rotate=0):
         pix = page.get_pixmap(dpi=dpi)
         pix.save(str(output_path))
         pix = None
-    if rotate % 360:
+    total_rot = (rotate + extra_rot) % 360
+    if total_rot:
         # PIL rotate() is counter-clockwise; negate for clockwise degrees
-        img = Image.open(output_path).rotate(-rotate, expand=True)
+        img = Image.open(output_path).rotate(-total_rot, expand=True)
         img.save(str(output_path))
     w, h = Image.open(output_path).size
     return w, h
