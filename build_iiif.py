@@ -67,6 +67,7 @@ def build_issue(issue_dir, out, prefix, force=False):
     # so the reader's text pane follows the article flow, not the raw OCR column-sort.
     # Newspapers omit reading_order (compact schema) -> they keep the OCR order.
     ro_map = {}
+    art_by_page = {}   # page-num -> [{"ids":[...], "title":..}]: one annotation box per article
     p_offset = 0  # scan-page -> printed-folio offset (bound volumes); 0 for per-issue mags
     _tj = issue_dir / "toc.json"
     if _tj.exists():
@@ -77,8 +78,13 @@ def build_issue(issue_dir, out, prefix, force=False):
                     ro_map[e.get("page")] = e["order"]
             if isinstance(_td.get("printed_offset"), int):
                 p_offset = _td["printed_offset"]
+            for a in (_td.get("articles") or []):
+                for g in (a.get("region_ids") or []):
+                    if isinstance(g, dict) and isinstance(g.get("ids"), list):
+                        art_by_page.setdefault(g.get("page"), []).append(
+                            {"ids": g["ids"], "title": a.get("title")})
         except Exception:
-            ro_map = {}
+            ro_map, art_by_page = {}, {}
 
     config.configs['helpers.auto_fields.AutoLang'].auto_lang = "en"
     man_id = f"{prefix}/{magazine}/{issue}/manifest.json"
@@ -87,9 +93,11 @@ def build_issue(issue_dir, out, prefix, force=False):
     manifest = Manifest(id=man_id, label={"en": [f"{title_of(magazine)} — {disp}"]})
 
     thumbs = {}
+    pages_meta = {}  # page-num -> {w,h,boxes[]}: lets the Contents TOC deep-link to articles
     for idx, pj in enumerate(page_jsons):
         d = json.loads(pj.read_text())
         n = d["page"]; w = d["width"]; h = d["height"]
+        pages_meta[n] = {"w": w, "h": h, "boxes": [rr.get("bbox") for rr in d.get("regions", [])]}
         pid = f"{issue}_page_{n:02d}"
         img = issue_dir / "images" / f"page_{n:02d}.jpg"
         # reuse tiles already generated (idempotent re-publish); --force overrides
@@ -165,7 +173,7 @@ def build_issue(issue_dir, out, prefix, force=False):
         except Exception:
             toc_data = None
     (issue_out / "index.html").write_text(
-        _landing_html(magazine, issue, disp, toc_data, len(page_jsons), version, prefix))
+        _landing_html(magazine, issue, disp, toc_data, len(page_jsons), version, prefix, pages_meta))
     # flat cover at out/<issue>/page_01.jpg + a small cover.jpg thumbnail (~500px).
     # Galleries/homepage load cover.jpg (full page scans are 1-3 MB and paint slowly);
     # the tiled viewer uses IIIF instead.
@@ -255,6 +263,43 @@ def _reader_href(start):
     return f"reader.html?tify={q}"
 
 
+def _article_bbox(entry, pages_meta):
+    """Union bbox (on the article's start page) of the regions the LLM assigned to
+    this entry, using region_ids=[{page, ids:[region-array-indices]}]. Returns
+    (start_page, [x1,y1,x2,y2], w, h) or None."""
+    rids = entry.get("region_ids")
+    if not (pages_meta and isinstance(rids, list)):
+        return None
+    start = entry.get("start_page") or (entry.get("pages") or [None])[0]
+    grp = next((g for g in rids if isinstance(g, dict) and g.get("page") == start), None) \
+        or next((g for g in rids if isinstance(g, dict) and g.get("ids")), None)
+    if not grp:
+        return None
+    pg = pages_meta.get(grp.get("page") or start)
+    if not pg:
+        return None
+    boxes = pg["boxes"]
+    got = [boxes[i] for i in grp.get("ids", []) if isinstance(i, int) and 0 <= i < len(boxes) and boxes[i]]
+    if not got:
+        return None
+    x1 = min(b[0] for b in got); y1 = min(b[1] for b in got)
+    x2 = max(b[2] for b in got); y2 = max(b[3] for b in got)
+    return (grp.get("page") or start, [x1, y1, x2, y2], pg["w"], pg["h"])
+
+
+def _reader_href_region(start, bbox, w, h):
+    """Deep-link that pans/zooms TIFY to an article. OSD viewport coords normalize
+    both axes by image width, so panX/panY = box-centre_px / w."""
+    x1, y1, x2, y2 = bbox
+    bw = max(1, x2 - x1); bh = max(1, y2 - y1)
+    zoom = max(1.0, min(w / bw, h / bh) * 0.85)
+    st = {"pages": [int(start)],
+          "panX": round((x1 + x2) / 2 / w, 4),
+          "panY": round((y1 + y2) / 2 / w, 4),
+          "zoom": round(min(zoom, 12.0), 3)}
+    return "reader.html?tify=" + urllib.parse.quote(json.dumps(st, separators=(",", ":")))
+
+
 def _pg_badge(pages, start, offset=0):
     # Display the printed folio (scan page + printed_offset) for citation; the
     # reader link still jumps by scan page. offset=0 for per-issue magazines.
@@ -276,7 +321,7 @@ def _pg_badge(pages, start, offset=0):
     return f'pp.&nbsp;{", ".join(parts)} &#8599;'
 
 
-def _toc_entry(e, offset=0):
+def _toc_entry(e, offset=0, pages_meta=None):
     esc = html.escape
     start = e.get("start_page") or (e.get("pages") or [1])[0]
     title = esc(e.get("title", "Untitled"))
@@ -289,12 +334,14 @@ def _toc_entry(e, offset=0):
         meta.append(f'<span class="kind">{_TYPE_LABEL.get(t, t)}</span>')
     metahtml = " &middot; ".join(meta)
     metahtml = f'<span class="byline-wrap">{metahtml}</span>' if metahtml else ""
-    return (f'<a class="entry" href="{_reader_href(start)}">'  # link jumps by scan page
+    ab = _article_bbox(e, pages_meta)                    # pan/zoom to the article if we can
+    href = _reader_href_region(ab[0], ab[1], ab[2], ab[3]) if ab else _reader_href(start)
+    return (f'<a class="entry" href="{href}">'
             f'<span><span class="title">{title}</span>{metahtml}</span>'
             f'<span class="pg">{_pg_badge(e.get("pages"), start, offset)}</span></a>')
 
 
-def _render_contents(toc, offset=0):
+def _render_contents(toc, offset=0, pages_meta=None):
     tops = [e for e in toc if not e.get("parent")]
     kids = {}
     for e in toc:
@@ -303,9 +350,9 @@ def _render_contents(toc, offset=0):
     items = []
     for e in tops:
         sub = kids.get(e.get("title"), [])
-        li = f'<li class="{ "dept" if sub else "" }'.rstrip() + '">' + _toc_entry(e, offset)
+        li = f'<li class="{ "dept" if sub else "" }'.rstrip() + '">' + _toc_entry(e, offset, pages_meta)
         if sub:
-            li += '<ul class="sub">' + "".join(f"<li>{_toc_entry(s, offset)}</li>" for s in sub) + "</ul>"
+            li += '<ul class="sub">' + "".join(f"<li>{_toc_entry(s, offset, pages_meta)}</li>" for s in sub) + "</ul>"
         li += "</li>"
         items.append(li)
     return "\n".join(items)
@@ -315,15 +362,19 @@ def _toc_items(toc_data):
     """Unified contents list. Newspapers emit an explicit `toc`; magazines emit
     `articles` (with ads flagged) and no `toc`, so derive one by dropping ads."""
     d = toc_data or {}
+    arts = d.get("articles")
+    # Prefer the article records when they carry region_ids -> the Contents TOC can
+    # deep-link (pan/zoom) to each article, not just its page.
+    if isinstance(arts, list) and any(a.get("region_ids") for a in arts if not a.get("is_advertisement")):
+        return [a for a in arts if not a.get("is_advertisement")]
     if isinstance(d.get("toc"), list) and d["toc"]:
         return d["toc"]
-    arts = d.get("articles")
     if isinstance(arts, list) and arts:
         return [a for a in arts if not a.get("is_advertisement")]
     return None
 
 
-def _landing_html(magazine, issue, disp, toc_data, n_pages, version, prefix):
+def _landing_html(magazine, issue, disp, toc_data, n_pages, version, prefix, pages_meta=None):
     title = title_of(magazine)
     cover = f"{prefix.rstrip('/')}/{issue}/page_01.jpg" if (prefix and issue) else "page_01.jpg"
     toc = _toc_items(toc_data)
@@ -332,7 +383,7 @@ def _landing_html(magazine, issue, disp, toc_data, n_pages, version, prefix):
         offset = 0
     n_articles = len(toc) if toc else None
     if toc:
-        contents = f'<ul class="toc">\n{_render_contents(toc, offset)}\n</ul>'
+        contents = f'<ul class="toc">\n{_render_contents(toc, offset, pages_meta)}\n</ul>'
     else:
         contents = ('<p class="pending">Contents for this issue are being prepared. '
                     'Use &ldquo;Read this issue&rdquo; to page through it now.</p>')
