@@ -452,10 +452,18 @@ def extract_page_image(doc, page_idx, output_path, rotate=0):
     grayscale layers per page — a faded background + the actual text layer — that
     the viewer composites. Extracting a single layer yields a washed-out image
     (and bad OCR), so when the largest size is shared by 2+ images we RENDER the
-    page (get_pixmap) to composite them, at a DPI matching the source resolution."""
+    page (get_pixmap) to composite them, at a DPI matching the source resolution.
+
+    Composite pages: Google-scanned PDFs (e.g. Progressive Woman from marxists.org)
+    store the page as one large grayscale text scan PLUS separate illustration /
+    masthead images drawn on top. Extracting only the largest image drops every
+    overlay — blank illustrations, clipped mastheads. When >1 image is actually
+    PLACED on the page we RENDER (get_pixmap), clipped to the base scan's
+    placement and at its native resolution, so the composite is preserved and the
+    output keeps the base image's dimensions."""
     page = doc[page_idx]
     images = page.get_images()
-    dims = []  # (area, xref, width)
+    dims = []  # (area, xref, width, height)
     for im in images:
         xref = im[0]
         try:
@@ -463,15 +471,39 @@ def extract_page_image(doc, page_idx, output_path, rotate=0):
             w, h = info.get("width", 0), info.get("height", 0)
         except Exception:
             w = h = 0
-        dims.append((w * h, xref, w))
+        dims.append((w * h, xref, w, h))
     max_area = max((d[0] for d in dims), default=0)
     layered = max_area > 0 and sum(1 for d in dims if d[0] == max_area) > 1
-    if images and not layered:
-        best_xref = max(dims)[1]
+
+    # Count images actually drawn on the page; grab the base scan's placement.
+    best_xref = max(dims)[1] if dims else None
+    placed, base_rect = 0, None
+    if max_area and not layered:
+        for im in images:
+            rects = page.get_image_rects(im[0])
+            if rects:
+                placed += 1
+                if im[0] == best_xref:
+                    base_rect = rects[0]
+    composite = placed > 1 and base_rect is not None
+
+    if images and not layered and not composite:
         pix = fitz.Pixmap(doc, best_xref)
         if pix.n > 4: pix = fitz.Pixmap(fitz.csRGB, pix)
         pix.save(str(output_path))
         pix = None
+    elif composite:
+        # Render the base scan's region so overlays composite in; resize to the
+        # base image's native dims so tiles stay drop-in with prior extractions.
+        _, _, base_w, base_h = max(dims)
+        dpi = round(base_w / (base_rect.width / 72))
+        pix = page.get_pixmap(clip=base_rect, dpi=dpi)
+        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples) if pix.n < 4 \
+            else Image.frombytes("RGBA", (pix.width, pix.height), pix.samples).convert("RGB")
+        pix = None
+        if img.size != (base_w, base_h):
+            img = img.resize((base_w, base_h), Image.LANCZOS)
+        img.save(str(output_path))
     else:
         # layered page (composite via render) OR no embedded image at all.
         # Match source resolution so we don't lose detail (cap 400 dpi).
