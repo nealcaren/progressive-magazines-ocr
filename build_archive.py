@@ -78,7 +78,7 @@ header p{{font-size:14px;color:#9a8b74;margin-top:4px;font-family:sans-serif}}
 .mag-card .meta{{font-size:12px;color:#8a7d6d;margin-top:4px;font-family:sans-serif}}
 </style></head><body>
 <header><div class="hwrap"><h1>{html.escape(title)}</h1>
-<p>Radical and reform magazines of the American 1910s &middot; {len(mags)} titles &middot; {total_issues} issues</p>
+<p>Radical and reform magazines of the American 1910s &middot; {len(mags)} titles &middot; {total_issues} issues &middot; <a href="fiction.html" style="color:#c2a578;text-decoration:none;font-weight:700">Fiction &amp; Poetry &rarr;</a></p>
 <form class="search" action="search.html" method="get" role="search">
   <input type="search" name="q" placeholder='Search the full text — try "general strike"' aria-label="Search the full text">
   <button type="submit">Search</button>

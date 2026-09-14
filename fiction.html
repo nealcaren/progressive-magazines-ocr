@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fiction &amp; Poetry — Voices of Dissent</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Georgia,'Times New Roman',serif;background:#f4f1eb;color:#2a2a2a}
+a{color:inherit}
+header{background:#2a2622;color:#e8e0d4;padding:24px 24px;border-bottom:3px solid #8b7355}
+.hwrap{max-width:1040px;margin:0 auto}
+header h1{font-size:30px;font-weight:800;letter-spacing:.01em}
+header p{font-size:14px;color:#9a8b74;margin-top:5px;font-family:sans-serif}
+header .back{font-size:13px;font-family:sans-serif;color:#c2a578;text-decoration:none;display:inline-block;margin-bottom:10px}
+.container{max-width:1040px;margin:0 auto;padding:22px 24px 60px}
+
+.toolbar{position:sticky;top:0;z-index:5;background:#f4f1eb;padding:14px 0 12px;
+  border-bottom:1px solid #ddd3c4}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.controls input[type=search]{flex:1;min-width:180px;padding:10px 13px;border:1px solid #8b7355;
+  border-radius:6px;font-size:15px;font-family:sans-serif;background:#faf8f4;color:#2a2a2a;outline:none}
+.controls input[type=search]:focus{border-color:#c2a578;box-shadow:0 0 0 3px rgba(194,165,120,.3)}
+.controls select{padding:10px 12px;border:1px solid #8b7355;border-radius:6px;background:#faf8f4;
+  font-family:sans-serif;font-size:14px;color:#2a2a2a;cursor:pointer}
+.tabs{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.tab{font-family:sans-serif;font-size:13px;padding:7px 14px;border:1px solid #c9bda9;border-radius:20px;
+  background:#faf8f4;color:#5a4d3d;cursor:pointer;user-select:none}
+.tab.active{background:#8b7355;color:#fff;border-color:#8b7355}
+.tab .n{opacity:.7;font-size:12px;margin-left:5px}
+.count{font-family:sans-serif;font-size:13px;color:#8a7d6d;margin:14px 2px 6px}
+
+ul.list{list-style:none}
+li.item{background:#fff;border:1px solid #d9cfbf;border-radius:7px;padding:13px 16px;margin-bottom:9px;
+  display:flex;gap:14px;align-items:baseline;transition:box-shadow .15s}
+li.item:hover{box-shadow:0 3px 14px rgba(0,0,0,.09)}
+.item .badge{font-family:sans-serif;font-size:10px;letter-spacing:.05em;text-transform:uppercase;
+  padding:3px 8px;border-radius:4px;white-space:nowrap;flex-shrink:0;align-self:center;min-width:74px;text-align:center}
+.b-story{background:#e4ece4;color:#3c5a3c}
+.b-serial{background:#e8e3f0;color:#4c3c6a}
+.b-poem{background:#f0e6d8;color:#7a5a2a}
+.item .body{flex:1;min-width:0}
+.item .title{font-size:18px;font-weight:700;text-decoration:none;color:#2a2622;line-height:1.25}
+.item .title:hover{color:#8b1a1a;text-decoration:underline}
+.item .meta{font-family:sans-serif;font-size:13px;color:#8a7d6d;margin-top:3px}
+.item .meta .author{color:#5a4d3d;font-weight:600}
+.item .meta .mag{color:#8b7355}
+.empty{text-align:center;color:#8a7d6d;font-family:sans-serif;padding:50px 0}
+@media(max-width:560px){.item{flex-direction:column;gap:6px}.item .badge{align-self:flex-start}}
+</style>
+</head>
+<body>
+<header><div class="hwrap">
+  <a class="back" href="index.html">&larr; Voices of Dissent</a>
+  <h1>Fiction &amp; Poetry</h1>
+  <p id="subtitle">Short stories, serialized fiction, and poems from across the archive.</p>
+</div></header>
+
+<div class="container">
+  <div class="toolbar">
+    <div class="controls">
+      <input type="search" id="q" placeholder="Search title or author…" autocomplete="off">
+      <select id="mag"><option value="">All magazines</option></select>
+      <select id="sort">
+        <option value="title">Sort: Title</option>
+        <option value="author">Sort: Author</option>
+        <option value="mag">Sort: Magazine</option>
+        <option value="date">Sort: Date</option>
+      </select>
+    </div>
+    <div class="tabs" id="tabs"></div>
+  </div>
+  <div class="count" id="count"></div>
+  <ul class="list" id="list"></ul>
+</div>
+
+<script>
+const BADGE = {story:['b-story','Story'], novel_chapter:['b-serial','Serial'],
+               series:['b-serial','Serial'], poem:['b-poem','Poem']};
+let DATA=[], section='All', magF='', sortK='title', q='';
+
+function tifyURL(it){
+  const t=encodeURIComponent(JSON.stringify({pages:[it.page]}));
+  return `${it.magazine}/${it.issue}/reader.html?tify=${t}`;
+}
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+function render(){
+  const ql=q.trim().toLowerCase();
+  let rows=DATA.filter(it=>
+    (section==='All'||it.category===section) &&
+    (!magF||it.magazine===magF) &&
+    (!ql || it.title.toLowerCase().includes(ql) || (it.author||'').toLowerCase().includes(ql)));
+  const cmp={
+    title:(a,b)=>a.title.toLowerCase().localeCompare(b.title.toLowerCase()),
+    author:(a,b)=>(a.author||'~').toLowerCase().localeCompare((b.author||'~').toLowerCase()),
+    mag:(a,b)=>a.mag_title.localeCompare(b.mag_title)||a.date.localeCompare(b.date),
+    date:(a,b)=>a.date.localeCompare(b.date)||a.title.localeCompare(b.title),
+  }[sortK];
+  rows.sort(cmp);
+  document.getElementById('count').textContent =
+    rows.length.toLocaleString()+' piece'+(rows.length===1?'':'s');
+  const list=document.getElementById('list');
+  if(!rows.length){list.innerHTML='<li class="empty">No pieces match your search.</li>';return;}
+  list.innerHTML=rows.map(it=>{
+    const [cls,lab]=BADGE[it.type]||['b-story',it.type];
+    const author=it.author?`<span class="author">${esc(it.author)}</span> · `:'';
+    return `<li class="item"><span class="badge ${cls}">${lab}</span>
+      <div class="body">
+        <a class="title" href="${tifyURL(it)}">${esc(it.title)}</a>
+        <div class="meta">${author}<span class="mag">${esc(it.mag_title)}</span> · ${esc(it.issue_label)} · p.${it.page}</div>
+      </div></li>`;
+  }).join('');
+}
+
+function buildTabs(){
+  const counts={All:DATA.length};
+  for(const it of DATA) counts[it.category]=(counts[it.category]||0)+1;
+  const order=['All','Short Stories','Serialized Fiction','Poetry'];
+  document.getElementById('tabs').innerHTML=order.map(s=>
+    `<span class="tab${s===section?' active':''}" data-s="${s}">${s}<span class="n">${(counts[s]||0).toLocaleString()}</span></span>`).join('');
+  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+    section=t.dataset.s;buildTabs();render();});
+}
+
+fetch('fiction.json').then(r=>r.json()).then(d=>{
+  DATA=d;
+  document.getElementById('subtitle').textContent =
+    `${d.length.toLocaleString()} pieces — short stories, serialized fiction, and poems from across the archive.`;
+  const mags=[...new Set(d.map(x=>x.mag_title))].sort();
+  document.getElementById('mag').insertAdjacentHTML('beforeend',
+    mags.map(m=>`<option value="${d.find(x=>x.mag_title===m).magazine}">${esc(m)}</option>`).join(''));
+  buildTabs();render();
+});
+document.getElementById('q').addEventListener('input',e=>{q=e.target.value;render();});
+document.getElementById('mag').addEventListener('change',e=>{magF=e.target.value;render();});
+document.getElementById('sort').addEventListener('change',e=>{sortK=e.target.value;render();});
+</script>
+</body>
+</html>
